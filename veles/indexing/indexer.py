@@ -9,7 +9,7 @@ from pathlib import Path
 from ..canonical.store import iter_documents
 from .bm25 import Bm25Index
 from .embedder import EmbeddingProvider
-from .vector_store import VectorStore
+from .vector_store import FaissFlatStore, NumpyFlatStore, VectorStore
 
 
 @dataclass
@@ -53,6 +53,7 @@ def build_index(
                 "heading_path": node.heading_path,
                 "text": node.text,
                 "provenance": node.provenance.model_dump(),
+                "access_groups": node.access_groups,
                 "sha256_doc": doc.sha256,
             }
         if len(texts_batch) >= batch:
@@ -71,11 +72,28 @@ def _flush(bundle: IndexBundle, embedder: EmbeddingProvider, batch: list[tuple[s
     bundle.bm25.add(ids, texts)
 
 
-def load_index(dir_path: Path, store: VectorStore) -> "IndexBundle":
-    """Загрузка numpy/faiss бандла; используется ask-путём."""
+def load_index(dir_path: Path, store: VectorStore | None = None) -> "IndexBundle":
+    """Загрузка бандла. Мета читается первой: валидация модели, выбор бэкенда по мете.
+
+    Несовпадение модели эмбеддингов = ValueError (тихий мусорный retrieval недопустим).
+    """
     import numpy as np
 
+    from ..config import EMBED_MODEL
+
     meta = json.loads((dir_path / "meta.json").read_text(encoding="utf-8"))
+    embed_meta = meta.get("embed", {})
+    if embed_meta.get("model") != EMBED_MODEL:
+        raise ValueError(
+            f"Индекс собран с моделью '{embed_meta.get('model')}', текущая '{EMBED_MODEL}'. "
+            "Пересоберите: python -m veles index"
+        )
+    if store is None:
+        prefer = "faiss" if "faiss" in embed_meta.get("backend", "") else "numpy"
+        if prefer == "numpy" or not (dir_path / "faiss.index").exists():
+            store = NumpyFlatStore()
+        else:
+            store = FaissFlatStore()
     bm25_payload = json.loads((dir_path / "bm25.json").read_text(encoding="utf-8"))
     bm25 = Bm25Index(k1=bm25_payload["k1"], b=bm25_payload["b"])
     bm25.ids = bm25_payload["ids"]
@@ -84,10 +102,10 @@ def load_index(dir_path: Path, store: VectorStore) -> "IndexBundle":
     bm25.df = bm25_payload["df"]
     bm25.avgdl = bm25_payload["avgdl"]
 
-    if store.name == "numpy-flat":
+    if (dir_path / "numpy_matrix.npy").exists():
         store.matrix = np.load(dir_path / "numpy_matrix.npy")
         store.ids = json.loads((dir_path / "numpy_ids.json").read_text(encoding="utf-8"))
-    else:  # faiss
+    else:
         import faiss
 
         store.index = faiss.read_index(str(dir_path / "faiss.index"))

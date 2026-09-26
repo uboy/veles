@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 from .canonical.store import iter_documents
-from .config import CANONICAL_DIR, CORPUS_ROOT, EMBED_MODEL, INDEX_DIR
+from .canonical.store import save_document
+from .config import CANONICAL_DIR, CORPUS_ROOT, EMBED_DIM, EMBED_MODEL, INDEX_DIR
 from .ingest.allowlist import scan_and_copy
 from .ingest.txt_md import TxtMdParserAdapter
 from .indexing.bm25 import Bm25Index  # noqa: F401 (реэкспорт для типа)
@@ -25,7 +26,8 @@ def cmd_scan_corpus(args: argparse.Namespace) -> int:
     m = scan_and_copy(copy=not args.dry)
     print(f"манифест: {m.name} @ {m.created_at}")
     print(f"включено: {m.stats['included_files']} файлов ({m.stats['included_bytes']} байт), "
-          f"скопировано сейчас: {m.stats['copied_now']}, исключено по чёрному списку: {m.stats['excluded_files']}")
+          f"скопировано сейчас: {m.stats['copied_now']}, чёрный список: {m.stats['excluded_by_blacklist']}, "
+          f"вне allowlist: {m.stats['outside_allowlist']}")
     for e in m.included[:5]:
         print(f"  + {e.dest_rel} [{e.sha256[:12]}]")
     if len(m.included) > 5:
@@ -42,8 +44,6 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         if path.suffix.lower() not in {".txt", ".md"} or not path.is_file():
             continue
         doc = parser.parse_file(path, corpus_root=CORPUS_ROOT)
-        from .canonical.store import save_document
-
         save_document(doc)
         docs += 1
         nodes += len(doc.nodes)
@@ -58,7 +58,7 @@ def cmd_index(args: argparse.Namespace) -> int:
         print("канон пуст - сначала `ingest`")
         return 1
     print(f"эмбеддер: {EMBED_MODEL}")
-    embedder = SentenceTransformersProvider(EMBED_MODEL, dim=__import__("veles.config", fromlist=["EMBED_DIM"]).EMBED_DIM)
+    embedder = SentenceTransformersProvider(EMBED_MODEL, dim=EMBED_DIM)
     store = make_store(prefer=args.backend)
     bundle = build_index(embedder, store)
     bundle.save(INDEX_DIR, embed_meta={"model": EMBED_MODEL, "backend": store.name})
@@ -66,19 +66,12 @@ def cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
-def _get_bundle():
-    store = make_store(prefer="faiss")
-    return load_index(INDEX_DIR, store)
-
-
 def cmd_ask(args: argparse.Namespace) -> int:
     if not (INDEX_DIR / "meta.json").exists():
         print("индекс не собран - сначала `index`")
         return 1
-    from .config import EMBED_DIM
-
     embedder = SentenceTransformersProvider(EMBED_MODEL, dim=EMBED_DIM)
-    bundle = _get_bundle()
+    bundle = load_index(INDEX_DIR)
     qvec = embedder.embed_query(args.query)
     evidence = hybrid_search(bundle, qvec, args.query, top_k=args.top_k)
     decision = decide(evidence)

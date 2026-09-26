@@ -77,8 +77,9 @@ class TxtMdParserAdapter:
 
     def parse_file(self, path: Path, corpus_root: Path) -> CanonicalDocument:
         rel = path.relative_to(corpus_root).as_posix()
-        raw = path.read_text(encoding="utf-8", errors="replace")
-        # BOM/нестандартные пробелы нормализуем, но sha256 считаем от оригинала
+        raw_bytes = path.read_bytes()  # sha256 - от байтов L0, не от нормализованного текста
+        raw = raw_bytes.decode("utf-8", errors="replace")
+        # BOM/нестандартные пробелы нормализуем только в тексте, не в хеше
         text = raw.replace("\ufeff", "").replace("\r\n", "\n")
 
         document_id = rel  # относительный путь - стабильная идентичность среза Ф1
@@ -90,7 +91,7 @@ class TxtMdParserAdapter:
             document_id=document_id,
             title=f"{path.stem}",
             document_type="transcript" if "транскрипц" in path.name.lower() else "summary",
-            sha256=CanonicalDocument.compute_sha256(raw.encode("utf-8")),
+            sha256=CanonicalDocument.compute_sha256(raw_bytes),
             parser_profile=self.parser_profile,
             derived_from=[f"onedev-vyshka:{rel}"],
         )

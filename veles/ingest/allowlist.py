@@ -49,7 +49,10 @@ class CorpusManifest(BaseModel):
 
 
 def scan_and_copy(
-    spec: Optional[dict] = None, corpus_root: Optional[Path] = None, copy: bool = True
+    spec: Optional[dict] = None,
+    corpus_root: Optional[Path] = None,
+    copy: bool = True,
+    manifest_dir: Optional[Path] = None,
 ) -> CorpusManifest:
     """Скан по строгому allowlist, копирование в корпус, запись манифеста в veles."""
     spec = spec or VYSHKA_MODULE1
@@ -64,15 +67,17 @@ def scan_and_copy(
     if not root.exists():
         raise FileNotFoundError(f"allowlist root не найден: {root}")
 
-    files = sorted(
+    # Кандидаты = расширение + паттерн имени + каталог-лекция; чёрный список режет
+    # уже из кандидатов (иначе excluded завышается файлами, отсечёнными dir_include).
+    candidates = sorted(
         p
         for p in root.rglob("*")
         if p.is_file()
         and p.suffix.lower() in spec["file_ext"]
         and spec["file_include"].search(p.name)
         and spec["dir_include"].search(str(p.parent))
-        and not spec["path_exclude"].search(str(p.relative_to(root)))
     )
+    files = [p for p in candidates if not spec["path_exclude"].search(str(p.relative_to(root)))]
 
     for src in files:
         rel = src.relative_to(root)
@@ -95,25 +100,26 @@ def scan_and_copy(
             )
         )
 
-    excluded_dirs = 0
-    for p in sorted(root.rglob("*")):
-        if spec["path_exclude"].search(str(p.relative_to(root))):
-            if p.is_dir():
-                excluded_dirs += 1
-            elif p.suffix.lower() in spec["file_ext"]:
-                manifest.excluded.append({"path": str(p), "reason": "blacklist-term"})
-    excluded_dirs = len(
-        {d for e in manifest.excluded for d in [str(Path(e["path"]).parent)]}
-    )
+    manifest.excluded = [
+        {"path": str(p), "reason": "blacklist-term"}
+        for p in candidates
+        if spec["path_exclude"].search(str(p.relative_to(root)))
+    ]
 
     manifest.stats = {
         "included_files": len(manifest.included),
         "included_bytes": sum(e.size_bytes for e in manifest.included),
         "copied_now": sum(1 for e in manifest.included if e.copied),
-        "excluded_files": len(manifest.excluded),
+        "excluded_by_blacklist": len(manifest.excluded),
+        "outside_allowlist": sum(
+            1
+            for p in root.rglob("*")
+            if p.is_file() and p.suffix.lower() in spec["file_ext"] and p not in candidates
+        ),
     }
 
-    MANIFESTS_DIR.mkdir(parents=True, exist_ok=True)
-    out = MANIFESTS_DIR / f"{spec['name']}-{manifest.created_at[:10]}.json"
+    out_dir = manifest_dir or MANIFESTS_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{spec['name']}-{manifest.created_at[:10]}.json"
     out.write_text(manifest.model_dump_json(indent=2), encoding="utf-8")
     return manifest

@@ -32,9 +32,25 @@ class Evidence:
     citations: list[Citation] = field(default_factory=list)
 
 
-def hybrid_search(bundle: IndexBundle, query_vec, query_text: str, top_k: int = 8) -> list[Evidence]:
-    dense = bundle.vector.search(query_vec, top_k=top_k * 3)
-    lex = bundle.bm25.search(query_text, top_k=top_k * 3)
+def hybrid_search(
+    bundle: IndexBundle,
+    query_vec,
+    query_text: str,
+    top_k: int = 8,
+    allowed_groups: set[str] | None = None,
+) -> list[Evidence]:
+    """Pre-retrieval authorization (инвариант 5): узлы без пересечения групп с
+    allowed_groups отсекаются до формирования evidence и не попадают в контекст."""
+    from ..config import DEFAULT_ACCESS_GROUPS
+
+    groups = allowed_groups or DEFAULT_ACCESS_GROUPS
+
+    def authorized(nid: str) -> bool:
+        meta = bundle.node_meta.get(nid)
+        return bool(meta) and bool(set(meta.get("access_groups", [])) & groups)
+
+    dense = [(nid, s) for nid, s in bundle.vector.search(query_vec, top_k=top_k * 5) if authorized(nid)]
+    lex = [(nid, s) for nid, s in bundle.bm25.search(query_text, top_k=top_k * 5) if authorized(nid)]
 
     rrf: dict[str, float] = {}
     ranks: dict[str, dict] = {}
