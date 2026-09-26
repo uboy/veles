@@ -22,6 +22,8 @@ MANIFESTS_DIR = Path(__file__).resolve().parents[1] / "corpus" / "manifests"
 EMBED_MODEL = os.environ.get("VELES_EMBED_MODEL", "intfloat/multilingual-e5-small")
 EMBED_DIM = 384
 
+DEFAULT_ACCESS_GROUPS = {"personal"}
+
 # RRF и AnswerPolicy (provisional; калибровка - фаза 2)
 RRF_K = 60
 ABSTAIN_CONFIDENCE = 0.55
