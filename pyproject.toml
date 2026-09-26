@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "veles"
+version = "0.1.0"
+description = "Knowledge Core: personal & corporate knowledge base with verifiable-citation RAG"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+st = ["sentence-transformers>=3.0"]
+faiss = ["faiss-cpu>=1.8"]
+qdrant = ["qdrant-client>=1.10"]
+
+[tool.setuptools.packages.find]
+include = ["veles*"]

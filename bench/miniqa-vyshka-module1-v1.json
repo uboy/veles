@@ -1,0 +1,20 @@
+{
+  "name": "miniqa-vyshka-module1-v1",
+  "created": "2026-09-26",
+  "note": "Срез Ф1: вопросы составлены по пересказам лекций Модуль_1; expect_doc_hint - подстрока document_id, в котором ожидается ответ.",
+  "items": [
+    {"id": "q01", "question": "Сколько занятий и блоков включает курс Искусственный интеллект для руководителей?", "expect_decision": "answer", "expect_doc_hint": "лекция1_09.10.2025"},
+    {"id": "q02", "question": "Какие ключевые аспекты выделяли при создании промтов для нейросетей?", "expect_decision": "answer", "expect_doc_hint": "лекция3_23.10.2025"},
+    {"id": "q03", "question": "Что обсуждали про создание чат-ботов в Телеграмме?", "expect_decision": "answer", "expect_doc_hint": "лекция2_16.10.2025"},
+    {"id": "q04", "question": "Какой ресурс посоветовали для локальной транскрибации длительных совещаний?", "expect_decision": "answer", "expect_doc_hint": "лекция5_06.11.2025"},
+    {"id": "q05", "question": "Что говорили о пирамиде Маслоу?", "expect_decision": "answer", "expect_doc_hint": "Общий менеджмент"},
+    {"id": "q06", "question": "До какого размера нужно сокращать список задач для управляемости?", "expect_decision": "answer", "expect_doc_hint": "Общий менеджмент"},
+    {"id": "q07", "question": "Какая реакция часто возникает у человека на вопрос почему?", "expect_decision": "answer", "expect_doc_hint": "Коммуникации"},
+    {"id": "q08", "question": "К чему привёл трёхкратно заданный вопрос зачем основателю компании?", "expect_decision": "answer", "expect_doc_hint": "Коммуникации"},
+    {"id": "q09", "question": "Кому подчиняются все службы в финансовой структуре компании?", "expect_decision": "answer", "expect_doc_hint": "Финансовый менеджмент"},
+    {"id": "q10", "question": "Какие активы рассматривали при продажах через онлайн-платформы?", "expect_decision": "answer", "expect_doc_hint": "Финансовый менеджмент"},
+    {"id": "q11", "question": "Всегда ли корреляция означает причинно-следственную связь?", "expect_decision": "answer", "expect_doc_hint": "Общий менеджмент"},
+    {"id": "q12", "question": "Какая ставка НДС действует в Беларуси в 2026 году?", "expect_decision": "abstain", "expect_doc_hint": null},
+    {"id": "q13", "question": "Как настроить Kubernetes Ingress в кластере?", "expect_decision": "abstain", "expect_doc_hint": null}
+  ]
+}
