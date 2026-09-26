@@ -40,6 +40,30 @@ def load_qa() -> list[dict]:
     return [r for r in rows if r["answer"].strip() and r["answer"].strip() != "-"]
 
 
+_IDENT_RE = re.compile(
+    r"(ГОСТ\s*Р?\s*[\d.]+(?:-\d{2,4})?|СП\s+[\d.]+|СНиП\s*[\d.]+(?:-\d{2,4})?|МДС\s+[\d.-]+|РД\s+[\d.-]+)",
+    re.IGNORECASE,
+)
+
+
+def extract_identifiers(text: str) -> list[str]:
+    """Номера нормативных документов в тексте вопроса ('ГОСТ 17.2.3.01-86' и т.п.)."""
+    out = []
+    for m in _IDENT_RE.finditer(text.upper().replace("Ё", "Е")):
+        out.append(re.sub(r"\s+", " ", m.group(1)))
+    return out
+
+
+def corpus_identifier_set(docs: dict) -> set[str]:
+    """Идентификаторы, присутствующие в корпусе: из названий и заголовков узлов."""
+    found = set()
+    for name, doc in docs.items():
+        found |= {i.upper() for i in extract_identifiers(name)}
+        for n in doc.nodes[:400]:
+            found |= {i.upper() for i in extract_identifiers(n.text)}
+    return found
+
+
 @dataclass
 class Unit:
     uid: str
@@ -74,18 +98,58 @@ def canonical_units(doc: CanonicalDocument) -> list[Unit]:
     ]
 
 
-def localize_gold(units: list[Unit], answer: str) -> Optional[str]:
-    """Узел, содержащий нормализованный префикс ответа. None = не локализован."""
-    na = normalize(answer)
-    if len(na) < 25:
+def _grams_tokens(text: str) -> tuple[set[str], set[str]]:
+    t = normalize(text).replace("ё", "е")
+    t = re.sub(r"[^a-zа-я0-9 ]", " ", t)
+    t = re.sub(r"\s+", " ", t)
+    words = [w for w in t.split() if len(w) > 4]
+    grams = {t[i : i + 3] for i in range(max(len(t) - 2, 0))}
+    return grams, set(words)
+
+
+def localize_gold_best(
+    units: list[Unit], answer: str, gram_cache: Optional[list] = None
+) -> tuple[Optional[str], Optional[str], float]:
+    """(gold_uid_set, best_fragment, best_score): все узлы с покрытием >=0.55 хотя бы
+    одним фрагментом + лучший фрагмент (для проверки покрытия evidence-pack'ом)."""
+    ans = " ".join(answer.split())
+    words = ans.split(" ")
+    fragments = []
+    step, size = 6, 14
+    for i in range(0, max(len(words) - size, 1), step):
+        fragments.append(" ".join(words[i : i + size]))
+    if not fragments:
+        fragments = [ans]
+
+    if gram_cache is None:
+        gram_cache = [_grams_tokens(u.text) for u in units]
+
+    unit_scores: dict[str, float] = {}
+    best_frag, best_frag_score = None, 0.0
+    for frag in fragments:
+        fg, fw = _grams_tokens(frag)
+        if len(fg) < 10:
+            continue
+        rare = sorted(fw, key=lambda w: sum(1 for g, wset in gram_cache if w in wset))[:6]
+        cand = set()
+        for w in rare:
+            cand |= {i for i, (g, wset) in enumerate(gram_cache) if w in wset}
+        for i in cand:
+            ug = gram_cache[i][0]
+            score = len(fg & ug) / max(len(fg), 1)
+            uid = units[i].uid
+            if score > unit_scores.get(uid, 0.0):
+                unit_scores[uid] = score
+            if score > best_frag_score:
+                best_frag_score, best_frag = score, frag
+    gold_set = {u for u, s in unit_scores.items() if s >= 0.55}
+    return (gold_set or None), best_frag, best_frag_score
+
+
+def localize_gold(
+    units: list[Unit], answer: str, gram_cache: Optional[list] = None
+) -> Optional[str]:
+    gold_set, _, _ = localize_gold_best(units, answer, gram_cache)
+    if not gold_set:
         return None
-    probe = na[:80]
-    for u in units:
-        if probe in normalize(u.text):
-            return u.uid
-    # второй проход: первые 40 знаков
-    probe = na[:40]
-    for u in units:
-        if probe in normalize(u.text):
-            return u.uid
-    return None
+    return sorted(gold_set)[0]
