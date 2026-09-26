@@ -35,20 +35,44 @@ def cmd_scan_corpus(args: argparse.Namespace) -> int:
     return 0
 
 
+def _manifest_known_relpaths() -> set[str]:
+    """Все dest_rel из манифестов allowlist-конвейера (любые корпусы)."""
+    import json
+
+    from .config import MANIFESTS_DIR
+
+    known: set[str] = set()
+    if MANIFESTS_DIR.exists():
+        for mpath in sorted(MANIFESTS_DIR.glob("*.json")):
+            try:
+                m = json.loads(mpath.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 - битый манифест не роняет ingest
+                continue
+            known.update(e["dest_rel"] for e in m.get("included", []))
+    return known
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     parser = TxtMdParserAdapter()
     docs = 0
     nodes = 0
+    skipped = 0
     corpus_dir = CORPUS_ROOT / "05_vyshka_academic" / "lectures"
+    known = set() if args.no_manifest_check else _manifest_known_relpaths()
     for path in sorted(corpus_dir.rglob("*")):
         if path.suffix.lower() not in {".txt", ".md"} or not path.is_file():
+            continue
+        rel = path.relative_to(CORPUS_ROOT).as_posix()
+        if known and rel not in known:
+            print(f"  ! пропущен (нет в allowlist-манифесте): {rel}")
+            skipped += 1
             continue
         doc = parser.parse_file(path, corpus_root=CORPUS_ROOT)
         save_document(doc)
         docs += 1
         nodes += len(doc.nodes)
         print(f"  {doc.document_id}: {len(doc.nodes)} узлов")
-    print(f"итого: документов={docs}, узлов={nodes} -> {CANONICAL_DIR}")
+    print(f"итого: документов={docs}, узлов={nodes}, пропущено мимо конвейера={skipped} -> {CANONICAL_DIR}")
     return 0
 
 
@@ -106,7 +130,10 @@ def main() -> int:
     p.add_argument("--dry", action="store_true", help="только манифест, без копирования")
     p.set_defaults(func=cmd_scan_corpus)
 
-    sub.add_parser("ingest", help="корпус -> канон (manifest.json + nodes.jsonl)").set_defaults(func=cmd_ingest)
+    p = sub.add_parser("ingest", help="корпус -> канон (manifest.json + nodes.jsonl)")
+    p.add_argument("--no-manifest-check", action="store_true",
+                   help="не сверять файлы с allowlist-манифестом (по умолчанию сверка включена)")
+    p.set_defaults(func=cmd_ingest)
 
     p = sub.add_parser("index", help="канон -> L2 (dense + BM25)")
     p.add_argument("--backend", default="faiss", choices=["faiss", "numpy"])
