@@ -17,6 +17,7 @@ class IndexBundle:
     vector: VectorStore
     bm25: Bm25Index
     node_meta: dict[str, dict] = field(default_factory=dict)
+    identifiers: set[str] = field(default_factory=set)
 
     def save(self, dir_path: Path, embed_meta: dict) -> None:
         dir_path.mkdir(parents=True, exist_ok=True)
@@ -24,7 +25,11 @@ class IndexBundle:
         self.bm25.save(dir_path)
         (dir_path / "meta.json").write_text(
             json.dumps(
-                {"node_meta": self.node_meta, "embed": embed_meta},
+                {
+                    "node_meta": self.node_meta,
+                    "embed": embed_meta,
+                    "identifiers": sorted(self.identifiers),
+                },
                 ensure_ascii=False,
             ),
             encoding="utf-8",
@@ -34,11 +39,21 @@ class IndexBundle:
 def build_index(
     embedder: EmbeddingProvider, store: VectorStore, batch: int = 256
 ) -> IndexBundle:
+    from ..policy.identifiers import extract_identifiers
+
     bm25 = Bm25Index()
     bundle = IndexBundle(vector=store, bm25=bm25)
+    bundle.identifiers = set()
     texts_batch: list[tuple[str, str]] = []  # (node_version_id, text)
 
     for doc in iter_documents():
+        bundle.identifiers |= set(extract_identifiers(doc.title))
+        bundle.identifiers |= {
+            i
+            for n in doc.nodes
+            if n.node_type == "section"
+            for i in extract_identifiers(n.text)
+        }
         for node in doc.nodes:
             if node.node_type == "root":
                 continue
@@ -110,4 +125,9 @@ def load_index(dir_path: Path, store: VectorStore | None = None) -> "IndexBundle
 
         store.index = faiss.read_index(str(dir_path / "faiss.index"))
         store.ids = json.loads((dir_path / "faiss_ids.json").read_text(encoding="utf-8"))
-    return IndexBundle(vector=store, bm25=bm25, node_meta=meta["node_meta"])
+    return IndexBundle(
+        vector=store,
+        bm25=bm25,
+        node_meta=meta["node_meta"],
+        identifiers=set(meta.get("identifiers", [])),
+    )

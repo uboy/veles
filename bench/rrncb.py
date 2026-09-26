@@ -98,6 +98,43 @@ def canonical_units(doc: CanonicalDocument) -> list[Unit]:
     ]
 
 
+def docling_structural_units(doc: CanonicalDocument, cap: int = 1800) -> list[Unit]:
+    """Секционные юниты Ф3: секция целиком (заголовок + абзацы/таблицы) - подобие
+    статьи/пункта нормативного документа. Длинные секции режутся по cap с суффиксом."""
+
+    def split_len(text: str) -> list[str]:
+        if len(text) <= cap:
+            return [text]
+        parts, buf = [], ""
+        for sent in re.split(r"(?<=[.!?…])\s+", text):
+            if buf and len(buf) + len(sent) + 1 > cap:
+                parts.append(buf)
+                buf = sent
+            else:
+                buf = f"{buf} {sent}".strip()
+        if buf:
+            parts.append(buf)
+        return parts
+
+    by_parent: dict[str, list] = {}
+    for n in doc.nodes:
+        if n.node_type == "paragraph":
+            by_parent.setdefault(n.parent_id, []).append(n)
+
+    units: list[Unit] = []
+    for n in doc.nodes:
+        if n.node_type != "section":
+            continue
+        children = by_parent.get(n.logical_node_id, [])
+        body = "\n".join([n.text] + [c.text for c in children]).strip()
+        if len(body) < 60:
+            continue
+        for k, part in enumerate(split_len(body)):
+            suffix = f":part{k + 1}" if k else ""
+            units.append(Unit(uid=f"sec:{n.logical_node_id}{suffix}", text=part))
+    return units
+
+
 def _grams_tokens(text: str) -> tuple[set[str], set[str]]:
     t = normalize(text).replace("ё", "е")
     t = re.sub(r"[^a-zа-я0-9 ]", " ", t)

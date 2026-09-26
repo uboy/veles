@@ -19,6 +19,7 @@ from .indexing.embedder import SentenceTransformersProvider
 from .indexing.indexer import build_index, load_index
 from .indexing.vector_store import make_store
 from .policy.answer import decide
+from .policy.identifiers import extract_identifiers
 from .retrieval.retriever import hybrid_search
 
 
@@ -98,7 +99,11 @@ def cmd_ask(args: argparse.Namespace) -> int:
     bundle = load_index(INDEX_DIR)
     qvec = embedder.embed_query(args.query)
     evidence = hybrid_search(bundle, qvec, args.query, top_k=args.top_k)
-    decision = decide(evidence)
+    decision = decide(
+        evidence,
+        query_identifiers=extract_identifiers(args.query),
+        known_identifiers=bundle.identifiers,
+    )
     print(f"решение: {decision.decision.upper()} (доверие {decision.confidence}; {decision.reason})")
     if decision.decision == "answer":
         top = decision.evidence[0]
