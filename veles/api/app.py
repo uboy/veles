@@ -158,6 +158,34 @@ def create_app(
             }],
         }
 
+    @app.get("/v1/knowledge/stats")
+    def knowledge_stats(authorization: str = Header(default="")) -> dict:
+        """Оглавление базы: источники, верхнеуровневые разделы, объёмы.
+
+        Питает команды /stats, /sources, /toc Telegram-моста и любые другие
+        клиенты; строится из мета узлов загруженного индекса, без похода в L2.
+        """
+        _auth(authorization)
+        p = _pipeline()
+        docs: dict[str, dict] = {}
+        for m in p.bundle.node_meta.values():
+            did = m.get("document_id") or "(без документа)"
+            d = docs.setdefault(
+                did, {"document_id": did, "title": m.get("title") or did, "nodes": 0, "sections": set()}
+            )
+            d["nodes"] += 1
+            heading_path = m.get("heading_path") or []
+            if heading_path:
+                d["sections"].add(heading_path[0])
+        doc_list = sorted(docs.values(), key=lambda d: (-d["nodes"], d["title"]))
+        for d in doc_list:
+            d["sections"] = sorted(d["sections"])
+        return {
+            "totals": {"documents": len(doc_list), "nodes": len(p.bundle.node_meta)},
+            "embed_model": EMBED_MODEL,
+            "documents": doc_list,
+        }
+
     @app.post("/v1/knowledge/query")
     def knowledge_query(req: QueryRequest, authorization: str = Header(default="")) -> dict:
         _auth(authorization)

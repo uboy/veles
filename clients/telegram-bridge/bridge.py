@@ -40,6 +40,9 @@ SYSTEM_PROMPT = os.environ.get(
     "Оформляй ответы markdown-разметкой (заголовки, списки, **выделение**).",
 )
 TG_PROXY = os.environ.get("TG_PROXY") or None
+# Прямой доступ к фасаду Veles для /stats /sources /toc (оглавление базы).
+VELES_BASE_URL = os.environ.get("VELES_BASE_URL", "http://127.0.0.1:8400").rstrip("/")
+VELES_API_TOKEN = os.environ.get("VELES_API_TOKEN", "")
 # Подпись provenance на ответах базовой модели: честно показывает, что текст
 # НЕ из базы знаний. Пустая переменная выключает подпись. {model} подставляется.
 SOURCE_FOOTER = os.environ.get(
@@ -56,6 +59,7 @@ log = logging.getLogger("tg-bridge")
 histories: dict[int, list[dict]] = {}
 tg_client: httpx.Client
 webui_client: httpx.Client
+veles_client: httpx.Client
 
 
 def load_owner() -> int | None:
@@ -108,6 +112,72 @@ def send(chat_id: int, text: str) -> None:
             tg("sendMessage", chat_id=chat_id, text=strip_html_tags(html_text))
 
 
+def veles_stats() -> dict:
+    """Оглавление базы из фасада: документы, верхнеуровневые разделы, объёмы."""
+    headers = {"Authorization": f"Bearer {VELES_API_TOKEN}"} if VELES_API_TOKEN else {}
+    r = veles_client.get(f"{VELES_BASE_URL}/v1/knowledge/stats", headers=headers)
+    r.raise_for_status()
+    return r.json()
+
+
+def sorted_docs(stats: dict) -> list[dict]:
+    return sorted(stats["documents"], key=lambda d: d["title"].lower())
+
+
+def fmt_stats(stats: dict) -> str:
+    docs = stats["documents"]
+    n_sections = sum(len(d["sections"]) for d in docs)
+    lines = [
+        f"База знаний: {stats['totals']['documents']} документов, "
+        f"{stats['totals']['nodes']} фрагментов, {n_sections} верхнеуровневых разделов.",
+        f"Модель эмбеддингов: {stats['embed_model']}.",
+        "",
+        "Крупнейшие источники:",
+    ]
+    for d in docs[:10]:
+        lines.append(f"- {d['title']} ({d['nodes']} фр., разделов {len(d['sections'])})")
+    if len(docs) > 10:
+        lines.append(f"- … и ещё {len(docs) - 10} (полный список: /sources)")
+    lines += ["", "Оглавление документа: /toc <номер из /sources>"]
+    return "\n".join(lines)
+
+
+def fmt_sources(stats: dict) -> str:
+    lines = [f"Источники базы знаний ({len(stats['documents'])}):", ""]
+    for i, d in enumerate(sorted_docs(stats), 1):
+        lines.append(f"{i}) {d['title']} ({d['nodes']} фр.)")
+    lines += ["", "Оглавление: /toc <номер> или /toc <часть названия>"]
+    return "\n".join(lines)
+
+
+def fmt_toc(stats: dict, arg: str) -> str:
+    docs = sorted_docs(stats)
+    doc = None
+    if arg.isdigit():
+        idx = int(arg) - 1
+        if 0 <= idx < len(docs):
+            doc = docs[idx]
+    if doc is None:
+        needle = arg.lower()
+        matches = [d for d in docs if needle in d["title"].lower()]
+        if not matches:
+            return f"Источник по запросу '{arg}' не найден. Список: /sources"
+        if len(matches) > 1:
+            lines = [f"Уточните ({len(matches)} совпадений):", ""]
+            lines += [f"{docs.index(d) + 1}) {d['title']}" for d in matches[:15]]
+            return "\n".join(lines)
+        doc = matches[0]
+    sections = doc["sections"]
+    lines = [f"{doc['title']}", f"({doc['nodes']} фрагментов, разделов {len(sections)})", ""]
+    if sections:
+        lines += [f"- {s}" for s in sections[:40]]
+        if len(sections) > 40:
+            lines.append(f"- … и ещё {len(sections) - 40}")
+    else:
+        lines.append("(документ без верхнеуровневых разделов)")
+    return "\n".join(lines)
+
+
 def handle(update: dict, owner: int | None) -> int | None:
     """Обрабатывает один update; возвращает актуального владельца."""
     msg = update.get("message") or {}
@@ -130,11 +200,30 @@ def handle(update: dict, owner: int | None) -> int | None:
 
     if text == "/start":
         send(chat_id, "Готов. Пишите вопрос; /new - сброс контекста; "
-                      "/kb <вопрос> - вопрос в базу знаний.")
+                      "/kb <вопрос> - вопрос в базу знаний; "
+                      "/stats - сводка базы; /sources - источники; "
+                      "/toc <номер> - оглавление документа.")
         return owner
     if text == "/new":
         histories.pop(chat_id, None)
         send(chat_id, "Контекст сброшен.")
+        return owner
+
+    if text in ("/stats", "/sources") or text.startswith("/toc"):
+        try:
+            stats = veles_stats()
+        except Exception as e:  # noqa: BLE001
+            log.exception("veles stats failed")
+            send(chat_id, f"База знаний недоступна: {type(e).__name__}: {str(e)[:150]}")
+            return owner
+        if text == "/stats":
+            send(chat_id, fmt_stats(stats))
+        elif text == "/sources":
+            send(chat_id, fmt_sources(stats))
+        else:
+            arg = text[4:].strip()
+            send(chat_id, fmt_toc(stats, arg) if arg else
+                 "Использование: /toc <номер из /sources> или /toc <часть названия>")
         return owner
 
     if text.startswith("/kb"):
@@ -223,4 +312,5 @@ if __name__ == "__main__":
         timeout=httpx.Timeout(75.0, connect=15.0),
     )
     webui_client = httpx.Client(timeout=httpx.Timeout(300.0, connect=15.0))
+    veles_client = httpx.Client(timeout=httpx.Timeout(30.0, connect=10.0))
     sys.exit(main())

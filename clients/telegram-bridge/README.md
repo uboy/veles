@@ -29,6 +29,8 @@
 | `OPENWEBUI_API_KEY` | да | API-ключ пользователя Open WebUI (Settings → Account) |
 | `OPENWEBUI_MODEL` | нет | id модели по умолчанию (пусто - дефолт WebUI) |
 | `OPENWEBUI_KB_MODEL` | нет | id модели базы знаний для `/kb` |
+| `VELES_BASE_URL` | нет | фасад Veles для /stats /sources /toc (дефолт `http://127.0.0.1:8400`) |
+| `VELES_API_TOKEN` | нет | bearer фасада (тот же `VELES_API_TOKEN` из veles-facade.env) |
 | `BRIDGE_SYSTEM_PROMPT` | нет | системный промпт общего чата |
 | `TG_PROXY` | нет | HTTPS/SOCKS прокси для Telegram API (дефолт - напрямую) |
 | `BRIDGE_STATE_FILE` | нет | файл pairing-state (дефолт `bridge-state.json` рядом) |
