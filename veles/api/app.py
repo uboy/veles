@@ -143,6 +143,21 @@ def create_app(
     def healthz() -> dict:
         return {"status": "ok", "ts": time.time()}
 
+    @app.get("/v1/models")
+    def list_models(authorization: str = Header(default="")) -> dict:
+        """OpenAI-совместимый список моделей: Open WebUI и другие клиенты опрашивают
+        /models у соединения; без него соединение выглядит пустым."""
+        _auth(authorization)
+        return {
+            "object": "list",
+            "data": [{
+                "id": "veles-knowledge",
+                "object": "model",
+                "created": 1727740800,
+                "owned_by": "veles",
+            }],
+        }
+
     @app.post("/v1/knowledge/query")
     def knowledge_query(req: QueryRequest, authorization: str = Header(default="")) -> dict:
         _auth(authorization)
