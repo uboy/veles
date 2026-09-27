@@ -131,6 +131,22 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    from .api.app import create_app
+
+    uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
+    return 0
+
+
+def cmd_mcp(args: argparse.Namespace) -> int:
+    from .mcp_server import run as run_mcp
+
+    run_mcp()
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(prog="veles", description="Knowledge Core CLI")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -147,6 +163,13 @@ def main() -> int:
     p = sub.add_parser("index", help="канон -> L2 (dense + BM25)")
     p.add_argument("--backend", default="faiss", choices=["faiss", "numpy"])
     p.set_defaults(func=cmd_index)
+
+    p = sub.add_parser("serve", help="HTTP-фасад (/v1/knowledge/query + chat/completions)")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8400)
+    p.set_defaults(func=cmd_serve)
+
+    sub.add_parser("mcp", help="MCP-сервер (stdio) для кодинг-агентов").set_defaults(func=cmd_mcp)
 
     p = sub.add_parser("ask", help="вопрос с цитатами")
     p.add_argument("query")
