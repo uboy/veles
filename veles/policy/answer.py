@@ -11,7 +11,7 @@ from typing import Literal
 
 from ..config import ABSTAIN_CONFIDENCE, RRF_K
 from ..retrieval.retriever import Evidence
-from .identifiers import identifiers_missed
+from .identifiers import codex_missed, identifiers_missed
 
 
 @dataclass
@@ -39,16 +39,19 @@ def decide(
     threshold: float = ABSTAIN_CONFIDENCE,
     query_identifiers: list[str] | None = None,
     known_identifiers: set[str] | None = None,
+    codex_refs: list[str] | None = None,
+    doc_titles: set[str] | None = None,
 ) -> AnswerDecision:
     """Identifier-grounding проверяется ПЕРВЫМ (детерминированный сигнал):
-    вопрос цитирует номер документа, которого нет в корпусе -> abstain независимо
-    от скоров (Ф2: скор-гейт слеп на ближний домен, FAR=0.9)."""
+    вопрос цитирует номер документа или кодекс, которых нет в корпусе -> abstain
+    независимо от скоров (Ф2: скор-гейт слеп на ближний домен, FAR=0.9; Ф3:
+    ГОСТ-сигнал не покрыл кодексы - добавлен codex-словарь)."""
     ids = query_identifiers or []
-    if identifiers_missed(ids, known_identifiers):
+    if identifiers_missed(ids, known_identifiers) or codex_missed(codex_refs or [], doc_titles):
         return AnswerDecision(
             decision="abstain",
             confidence=0.0,
-            reason=f"вопрос ссылается на документ(ы) {ids}, отсутствующие в корпусе",
+            reason="вопрос ссылается на документ(ы), отсутствующие в корпусе",
             evidence=evidence,
         )
     conf = _confidence(evidence)
