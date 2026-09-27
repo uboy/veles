@@ -18,13 +18,17 @@ def _doc_dir(document_id: str, root: Path | None = None) -> Path:
 def save_document(doc: CanonicalDocument, root: Path | None = None) -> Path:
     d = _doc_dir(doc.document_id, root)
     d.mkdir(parents=True, exist_ok=True)
-    manifest = doc.model_dump(exclude={"nodes"})
-    (d / "manifest.json").write_text(
-        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    with (d / "nodes.jsonl").open("w", encoding="utf-8") as f:
+    # nodes.jsonl ПЕРВЫМ, manifest последним (ревью-2: убитый процесс не оставит
+    # «готовый» документ без узлов)
+    with (d / "nodes.jsonl.tmp").open("w", encoding="utf-8") as f:
         for node in doc.nodes:
             f.write(json.dumps(node.model_dump(), ensure_ascii=False) + "\n")
+    (d / "nodes.jsonl.tmp").replace(d / "nodes.jsonl")
+    manifest = doc.model_dump(exclude={"nodes"})
+    (d / "manifest.tmp").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    (d / "manifest.tmp").replace(d / "manifest.json")
     return d
 
 

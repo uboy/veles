@@ -49,10 +49,7 @@ def build_index(
     for doc in iter_documents():
         bundle.identifiers |= set(extract_identifiers(doc.title))
         bundle.identifiers |= {
-            i
-            for n in doc.nodes
-            if n.node_type == "section"
-            for i in extract_identifiers(n.text)
+            i for n in doc.nodes if n.node_type != "root" for i in extract_identifiers(n.text)
         }
         for node in doc.nodes:
             if node.node_type == "root":
@@ -125,9 +122,13 @@ def load_index(dir_path: Path, store: VectorStore | None = None) -> "IndexBundle
 
         store.index = faiss.read_index(str(dir_path / "faiss.index"))
         store.ids = json.loads((dir_path / "faiss_ids.json").read_text(encoding="utf-8"))
+    if "identifiers" not in meta:
+        raise ValueError(
+            "В meta.json нет identifiers - индекс собран старой версией veles. Пересоберите: python -m veles index"
+        )
     return IndexBundle(
         vector=store,
         bm25=bm25,
         node_meta=meta["node_meta"],
-        identifiers=set(meta.get("identifiers", [])),
+        identifiers=set(meta["identifiers"]),
     )

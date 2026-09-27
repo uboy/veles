@@ -68,6 +68,7 @@ def corpus_identifier_set(docs: dict) -> set[str]:
 class Unit:
     uid: str
     text: str
+    logical: Optional[str] = None  # logical_node_id для small-to-big расширения
 
 
 @dataclass
@@ -92,10 +93,42 @@ def flat_units(doc: CanonicalDocument, size: int = 800, overlap: int = 100) -> l
 
 def canonical_units(doc: CanonicalDocument) -> list[Unit]:
     return [
-        Unit(uid=n.node_version_id, text=n.text)
+        Unit(uid=n.node_version_id, text=n.text, logical=n.logical_node_id)
         for n in doc.nodes
         if n.node_type == "paragraph"
     ]
+
+
+def lcs_gold(
+    units: list[Unit], answer: str, norm_cache: list[str], tok_index: dict[str, set[int]],
+    min_chars: int = 40,
+) -> Optional[set[str]]:
+    """Вербатим-LCS gold (ревью-2 P0 fix): юниты с непрерывным общим отрезком
+    >= min_chars с ответом. Префильтр кандидатов по редким словам, затем
+    SequenceMatcher. Gold-сеты крошечные (~1-3 юнита) и одинаковой ширины между
+    конфигурациями - база случайного попадания исчезает (эксперимент 27.09)."""
+    na = norm_text(answer)
+    fw = rare_tokens(answer)
+    rare = sorted(fw, key=lambda w: len(tok_index.get(w, set())))[:6]
+    cand: set[int] = set()
+    for w in rare:
+        cand |= tok_index.get(w, set())
+    gold: set[str] = set()
+    for i in cand:
+        sm = SequenceMatcher(None, na, norm_cache[i], autojunk=True)
+        m = sm.find_longest_match(0, len(na), 0, len(norm_cache[i]))
+        if m.size >= min_chars:
+            gold.add(units[i].uid)
+    return gold or None
+
+
+def rare_tokens(text: str) -> set[str]:
+    return {w for w in norm_text(text).split() if len(w) > 4}
+
+
+def norm_text(t: str) -> str:
+    t = re.sub(r"[^а-яёa-z0-9 ]", " ", t.lower().replace("ё", "е"))
+    return re.sub(r"\s+", " ", t).strip()
 
 
 def docling_structural_units(doc: CanonicalDocument, cap: int = 1800) -> list[Unit]:
@@ -131,7 +164,7 @@ def docling_structural_units(doc: CanonicalDocument, cap: int = 1800) -> list[Un
             continue
         for k, part in enumerate(split_len(body)):
             suffix = f":part{k + 1}" if k else ""
-            units.append(Unit(uid=f"sec:{n.logical_node_id}{suffix}", text=part))
+            units.append(Unit(uid=f"sec:{n.logical_node_id}{suffix}", text=part, logical=n.logical_node_id))
     return units
 
 

@@ -64,6 +64,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         if path.suffix.lower() not in {".txt", ".md"} or not path.is_file():
             continue
         rel = path.relative_to(CORPUS_ROOT).as_posix()
+        if not known and not args.no_manifest_check:
+            raise SystemExit("манифесты allowlist пусты/отсутствуют - ingest запрещён (fail-closed)")
         if known and rel not in known:
             print(f"  ! пропущен (нет в allowlist-манифесте): {rel}")
             skipped += 1

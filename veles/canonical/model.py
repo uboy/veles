@@ -57,7 +57,8 @@ class CanonicalDocument(BaseModel):
 
     @staticmethod
     def compute_sha256(raw_bytes: bytes) -> str:
-        return _sha256(raw_bytes.decode("utf-8", errors="replace"))
+        """Хеш сырых байтов L0-файла (верифицируем против allowlist-манифеста)."""
+        return hashlib.sha256(raw_bytes).hexdigest()
 
     def add_node(self, **kwargs: Any) -> CanonicalNode:
         node = CanonicalNode(

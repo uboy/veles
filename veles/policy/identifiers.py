@@ -7,10 +7,16 @@ from __future__ import annotations
 import re
 
 _IDENT_RE = re.compile(
-    r"(ГОСТ\s*Р?\s*[\d.]+(?:-\d{2,4})?|СП\s+[\d.]+|СНиП\s*[\d.]+(?:-\d{2,4})?|"
+    r"(?<![А-ЯЁA-Z])(ГОСТ\s*Р?\s*[\d.]+(?:-\d{2,4})?|СП\s+[\d.]+|СНиП\s*[\d.]+(?:-\d{2,4})?|"
     r"МДС\s+[\d.-]+|РД\s+[\d.-]+)",
     re.IGNORECASE,
 )
+
+
+def _core(identifier: str) -> str:
+    """Числовое ядро номера без префикса и 'Р' ('ГОСТ Р 17.2.3.01-86' -> '17.2.3.01-86')."""
+    tail = re.split(r"[А-ЯЁA-Z\s]+", identifier.strip(), maxsplit=1)[-1]
+    return tail.strip(" .-")
 
 
 def extract_identifiers(text: str) -> list[str]:
@@ -33,6 +39,9 @@ def identifiers_missed(
         return False
     if not known_identifiers:
         return True
-    return not any(
-        any(i in doc_id for doc_id in known_identifiers) for i in query_identifiers
-    )
+    known_cores = {_core(k) for k in known_identifiers}
+    for i in query_identifiers:
+        core = _core(i)
+        if any(core in k or k in core for k in known_cores if k):
+            return False
+    return True
