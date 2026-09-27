@@ -26,6 +26,8 @@ from pathlib import Path
 
 import httpx
 
+from tg_format import format_markdown_to_html, split_for_telegram, strip_html_tags
+
 TG_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TG_API = f"https://api.telegram.org/bot{TG_TOKEN}"
 WEBUI_BASE = os.environ.get("OPENWEBUI_BASE_URL", "http://127.0.0.1:8300").rstrip("/")
@@ -34,9 +36,17 @@ DEFAULT_MODEL = os.environ.get("OPENWEBUI_MODEL", "")
 KB_MODEL = os.environ.get("OPENWEBUI_KB_MODEL", "")
 SYSTEM_PROMPT = os.environ.get(
     "BRIDGE_SYSTEM_PROMPT",
-    "Ты - полезный личный ассистент. Отвечай по делу, на русском языке.",
+    "Ты - полезный личный ассистент. Отвечай по делу, на русском языке. "
+    "Оформляй ответы markdown-разметкой (заголовки, списки, **выделение**).",
 )
 TG_PROXY = os.environ.get("TG_PROXY") or None
+# Подпись provenance на ответах базовой модели: честно показывает, что текст
+# НЕ из базы знаний. Пустая переменная выключает подпись. {model} подставляется.
+SOURCE_FOOTER = os.environ.get(
+    "BRIDGE_SOURCE_FOOTER",
+    "\n\n<i>— ответ общей модели {model}, без обращения к базе знаний. "
+    "Спросить базу знаний: /kb &lt;вопрос&gt;</i>",
+)
 PAIR_MODE = os.environ.get("PAIR_MODE", "1") == "1"
 STATE_FILE = Path(os.environ.get("BRIDGE_STATE_FILE", "bridge-state.json"))
 HISTORY_LIMIT = int(os.environ.get("BRIDGE_HISTORY", "16"))
@@ -83,9 +93,19 @@ def webui_chat(messages: list[dict], model: str) -> str:
 
 
 def send(chat_id: int, text: str) -> None:
+    """Отправить markdown-текст: куски по абзацам, каждый как Telegram-HTML
+    (перенос пайплайна донора); ok=false от Telegram -> plain fallback куска.
+    Лимит куска 3400 по plain-тексту с запасом на разрастание HTML-разметки."""
     text = (text or "").strip() or "(пустой ответ)"
-    for i in range(0, len(text), 4000):
-        tg("sendMessage", chat_id=chat_id, text=text[i : i + 4000])
+    for chunk in split_for_telegram(text, limit=3400):
+        html_text = format_markdown_to_html(chunk)
+        sent = tg("sendMessage", chat_id=chat_id, text=html_text, parse_mode="HTML")
+        if not sent.get("ok"):
+            log.warning(
+                "HTML send failed (%s), fallback to plain",
+                str(sent.get("description"))[:120],
+            )
+            tg("sendMessage", chat_id=chat_id, text=strip_html_tags(html_text))
 
 
 def handle(update: dict, owner: int | None) -> int | None:
@@ -147,6 +167,8 @@ def handle(update: dict, owner: int | None) -> int | None:
         send(chat_id, f"Ошибка запроса к модели: {type(e).__name__}: {str(e)[:200]}")
         return owner
     hist.append({"role": "assistant", "content": answer})
+    if SOURCE_FOOTER:
+        answer += SOURCE_FOOTER.format(model=DEFAULT_MODEL or "по умолчанию")
     send(chat_id, answer)
     return owner
 
