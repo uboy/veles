@@ -60,6 +60,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     skipped = 0
     corpus_dir = CORPUS_ROOT / "05_vyshka_academic" / "lectures"
     known = set() if args.no_manifest_check else _manifest_known_relpaths()
+    if not known and not args.no_manifest_check:
+        raise SystemExit("манифесты allowlist пусты/отсутствуют - ingest запрещён (fail-closed)")
     for path in sorted(corpus_dir.rglob("*")):
         if path.suffix.lower() not in {".txt", ".md"} or not path.is_file():
             continue
