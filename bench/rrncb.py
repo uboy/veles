@@ -24,7 +24,9 @@ from typing import Optional
 from veles.canonical.model import CanonicalDocument
 from veles.ingest.pdf_text import PyMuPdfParserAdapter
 
-RRNCB_DIR = Path(r"<local-pc>\proj\knowledge-sources\06_benchmarks\rrncb")
+import os
+
+RRNCB_DIR = Path(os.environ.get("VELES_RRNCB_DIR", r"<local-pc>\proj\knowledge-sources\06_benchmarks\rrncb"))
 QA_CSV = RRNCB_DIR / "rrncb_public_dataset.csv"
 DOCS_DIR = RRNCB_DIR / "docs"
 
