@@ -21,6 +21,7 @@ CHUNK_LIMIT = 3900
 
 _CODE_FENCE = re.compile(r"```([a-zA-Z0-9+_-]*)\n?(.*?)```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`([^`]+?)`")
+_MD_IMAGE = re.compile(r"![\[^\]]\]\](https?://[^)\s]+\)")
 _MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
 
@@ -74,6 +75,7 @@ def format_markdown_to_html(text: str) -> str:
         md_links.append((match.group(1), match.group(2).replace("&", "&amp;")))
         return f"__MD_LINK_{len(md_links) - 1}__"
 
+    text = _MD_IMAGE.sub("", text)  # фото уходят отдельным sendPhoto
     text = _MD_LINK.sub(_stash_link, text)
 
     text = _esc(text)
