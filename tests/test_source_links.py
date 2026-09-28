@@ -7,7 +7,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from test_api import make_pipeline
+from tests.test_api import make_pipeline
 from veles.api import app as app_module
 from veles.api.app import create_app, render_chat_content
 

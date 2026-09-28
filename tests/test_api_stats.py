@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from test_api import make_pipeline
+from tests.test_api import make_pipeline
 from veles.api.app import create_app
 
 
