@@ -172,12 +172,15 @@ def create_app(
         "resolver": resolver or StaticOwnerResolver.from_env(),
     }
 
+    _pipeline_lock = __import__("threading").Lock()
+
     def _pipeline() -> VelesPipeline:
-        if state["pipeline"] is None:
-            embedder = SentenceTransformersProvider(EMBED_MODEL, dim=EMBED_DIM)
-            bundle = load_index(INDEX_DIR)
-            llm = OpenAICompatibleProvider(llm_config_from_env())
-            state["pipeline"] = VelesPipeline(bundle, embedder, llm)
+        with _pipeline_lock:
+            if state["pipeline"] is None:
+                embedder = SentenceTransformersProvider(EMBED_MODEL, dim=EMBED_DIM)
+                bundle = load_index(INDEX_DIR)
+                llm = OpenAICompatibleProvider(llm_config_from_env())
+                state["pipeline"] = VelesPipeline(bundle, embedder, llm)
         return state["pipeline"]
 
     def _warmup() -> None:
@@ -190,7 +193,11 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
-        _warmup()
+        # прогрев в фоне: под нагрузкой загрузка эмбеддера занимает минуты,
+        # а uvicorn связывает порт только после lifespan - сервис недоступен
+        import threading
+
+        threading.Thread(target=_warmup, daemon=True).start()
         yield
 
     app = FastAPI(title="Veles Knowledge API", version="0.4.0", lifespan=lifespan)
