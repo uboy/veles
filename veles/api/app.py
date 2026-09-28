@@ -26,6 +26,7 @@ from ..indexing.embedder import SentenceTransformersProvider
 from ..indexing.indexer import IndexBundle, load_index
 from ..policy.answer import decide
 from ..policy.identifiers import extract_codex_refs, extract_identifiers
+from ..policy.identity import IdentityResolver, StaticOwnerResolver
 from ..retrieval.retriever import hybrid_search
 from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
 
@@ -60,10 +61,13 @@ class VelesPipeline:
             m.get("title", "") for m in bundle.node_meta.values() if m.get("title")
         }
 
-    def answer(self, query: str, top_k: int = 5, use_llm: bool = True) -> dict:
+    def answer(
+        self, query: str, top_k: int = 5, use_llm: bool = True,
+        allowed_groups: Optional[set[str]] = None,
+    ) -> dict:
         qvec = self.embedder.embed_query(query)
         evidence = hybrid_search(
-            self.bundle, qvec, query, top_k=top_k,
+            self.bundle, qvec, query, top_k=top_k, allowed_groups=allowed_groups,
         )
         decision = decide(
             evidence,
@@ -129,8 +133,14 @@ def render_chat_content(result: dict) -> str:
 def create_app(
     pipeline: Optional[VelesPipeline] = None,
     api_token: Optional[str] = None,
+    resolver: Optional[IdentityResolver] = None,
 ) -> FastAPI:
-    state = {"pipeline": pipeline, "token": api_token or os.environ.get("VELES_API_TOKEN", "")}
+    state = {
+        "pipeline": pipeline,
+        "token": api_token or os.environ.get("VELES_API_TOKEN", ""),
+        # allowed_groups резолвит СЕРВЕР из личности (инвариант 5), не клиент
+        "resolver": resolver or StaticOwnerResolver.from_env(),
+    }
 
     def _pipeline() -> VelesPipeline:
         if state["pipeline"] is None:
@@ -210,7 +220,10 @@ def create_app(
     @app.post("/v1/knowledge/query")
     def knowledge_query(req: QueryRequest, authorization: str = Header(default="")) -> dict:
         _auth(authorization)
-        return _pipeline().answer(req.query, req.top_k, req.use_llm)
+        return _pipeline().answer(
+            req.query, req.top_k, req.use_llm,
+            allowed_groups=state["resolver"].allowed_groups(),
+        )
 
     @app.post("/v1/chat/completions")
     def chat_completions(req: ChatRequest, authorization: str = Header(default="")) -> JSONResponse:
@@ -218,7 +231,10 @@ def create_app(
         user_msgs = [m for m in req.messages if m.role == "user"]
         if not user_msgs:
             raise HTTPException(status_code=400, detail="нет сообщения пользователя")
-        result = _pipeline().answer(user_msgs[-1].content, top_k=5, use_llm=True)
+        result = _pipeline().answer(
+            user_msgs[-1].content, top_k=5, use_llm=True,
+            allowed_groups=state["resolver"].allowed_groups(),
+        )
         rid = result["request_id"]
         return JSONResponse({
             "id": f"chatcmpl-veles-{rid}",
