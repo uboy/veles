@@ -31,7 +31,7 @@ def test_models_respects_bearer_token() -> None:
 def _empty_retrieval_pipeline(llm):
     """Пайплайн, где retrieval не находит ничего (путь abstain)."""
     from veles.indexing.indexer import IndexBundle
-    from test_api import FakeEmbedder
+    from tests.test_api import FakeEmbedder
 
     class EmptyVector:
         def search(self, q, top_k=10):
