@@ -40,6 +40,9 @@ SYSTEM_PROMPT = os.environ.get(
     "Оформляй ответы markdown-разметкой (заголовки, списки, **выделение**).",
 )
 TG_PROXY = os.environ.get("TG_PROXY") or None
+# Явная привязка владельца (chat_id) - закрывает окно спаривания первого /start;
+# задан -> state-file и PAIR_MODE игнорируются.
+OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "0") or 0)
 # Прямой доступ к фасаду Veles для /stats /sources /toc (оглавление базы).
 VELES_BASE_URL = os.environ.get("VELES_BASE_URL", "http://127.0.0.1:8400").rstrip("/")
 VELES_API_TOKEN = os.environ.get("VELES_API_TOKEN", "")
@@ -53,6 +56,11 @@ SOURCE_FOOTER = os.environ.get(
 PAIR_MODE = os.environ.get("PAIR_MODE", "1") == "1"
 STATE_FILE = Path(os.environ.get("BRIDGE_STATE_FILE", "bridge-state.json"))
 HISTORY_LIMIT = int(os.environ.get("BRIDGE_HISTORY", "16"))
+if HISTORY_LIMIT <= 0:
+    # hist[-0:] в python - ВЕСЬ список; 0 или меньше означало бы обратное желаемому
+    logging.getLogger("tg-bridge").warning("BRIDGE_HISTORY=%s некорректен, использую 16", HISTORY_LIMIT)
+    HISTORY_LIMIT = 16
+MAX_MESSAGE_CHARS = 8000
 
 log = logging.getLogger("tg-bridge")
 
@@ -96,20 +104,56 @@ def webui_chat(messages: list[dict], model: str) -> str:
     return r.json()["choices"][0]["message"]["content"]
 
 
-def send(chat_id: int, text: str) -> None:
+def _tg_send(chat_id: int, text: str, parse_html: bool) -> dict | None:
+    """sendMessage с одним ретраем: транспортные ошибки и 429 (retry_after)."""
+    params: dict = {"chat_id": chat_id, "text": text}
+    if parse_html:
+        params["parse_mode"] = "HTML"
+    for attempt in range(2):
+        try:
+            sent = tg("sendMessage", **params)
+        except httpx.HTTPError as e:
+            log.warning("sendMessage transport error (%s), попытка %s", type(e).__name__, attempt + 1)
+            time.sleep(3)
+            continue
+        if sent.get("ok"):
+            return sent
+        retry_after = (sent.get("parameters") or {}).get("retry_after")
+        if retry_after:
+            log.warning("rate limited, sleep %ss", retry_after)
+            time.sleep(int(retry_after) + 1)
+            continue
+        return sent
+    return None
+
+
+def apply_footer(answer_html: str, model: str) -> str:
+    """HTML-подпись provenance; replace вместо format (env-строка с фигурными
+    скобками не должна ронять ответ)."""
+    if not SOURCE_FOOTER:
+        return answer_html
+    return answer_html + SOURCE_FOOTER.replace("{model}", model or "по умолчанию")
+
+
+def send(chat_id: int, text: str, footer_model: str = "") -> None:
     """Отправить markdown-текст: куски по абзацам, каждый как Telegram-HTML
-    (перенос пайплайна донора); ok=false от Telegram -> plain fallback куска.
-    Лимит куска 3400 по plain-тексту с запасом на разрастание HTML-разметки."""
+    (перенос пайплайна донора); ok=false -> plain fallback куска; транспортные
+    ошибки и 429 - ретрай. Лимит 3400 plain с запасом до 4096 Telegram.
+    footer_model: HTML-подпись provenance на последнем куске ПОСЛЕ конвертации
+    (иначе конвертер двойно-экранирует теги подписи)."""
     text = (text or "").strip() or "(пустой ответ)"
-    for chunk in split_for_telegram(text, limit=3400):
+    chunks = split_for_telegram(text, limit=3400)
+    for i, chunk in enumerate(chunks):
         html_text = format_markdown_to_html(chunk)
-        sent = tg("sendMessage", chat_id=chat_id, text=html_text, parse_mode="HTML")
-        if not sent.get("ok"):
+        if footer_model and i == len(chunks) - 1:
+            html_text = apply_footer(html_text, footer_model)
+        sent = _tg_send(chat_id, html_text, parse_html=True)
+        if sent is None or not sent.get("ok"):
             log.warning(
                 "HTML send failed (%s), fallback to plain",
-                str(sent.get("description"))[:120],
+                str((sent or {}).get("description"))[:120],
             )
-            tg("sendMessage", chat_id=chat_id, text=strip_html_tags(html_text))
+            _tg_send(chat_id, strip_html_tags(html_text), parse_html=False)
 
 
 def veles_stats() -> dict:
@@ -157,6 +201,8 @@ def fmt_toc(stats: dict, arg: str) -> str:
         idx = int(arg) - 1
         if 0 <= idx < len(docs):
             doc = docs[idx]
+        else:
+            return f"Источник №{arg} не найден (всего {len(docs)}). Список: /sources"
     if doc is None:
         needle = arg.lower()
         matches = [d for d in docs if needle in d["title"].lower()]
@@ -182,7 +228,7 @@ def handle(update: dict, owner: int | None) -> int | None:
     """Обрабатывает один update; возвращает актуального владельца."""
     msg = update.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
-    text = (msg.get("text") or "").strip()
+    text = (msg.get("text") or "").strip()[:MAX_MESSAGE_CHARS]
     if not chat_id or not text:
         return owner
 
@@ -212,9 +258,9 @@ def handle(update: dict, owner: int | None) -> int | None:
     if text in ("/stats", "/sources") or text.startswith("/toc"):
         try:
             stats = veles_stats()
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:  # noqa: BLE001 - наружу только тип (str может нести URL)
             log.exception("veles stats failed")
-            send(chat_id, f"База знаний недоступна: {type(e).__name__}: {str(e)[:150]}")
+            send(chat_id, f"База знаний недоступна ({type(e).__name__}); повторите позже.")
             return owner
         if text == "/stats":
             send(chat_id, fmt_stats(stats))
@@ -236,9 +282,9 @@ def handle(update: dict, owner: int | None) -> int | None:
             return owner
         try:
             answer = webui_chat([{"role": "user", "content": question}], KB_MODEL)
-        except Exception as e:  # noqa: BLE001 - наружу только краткая причина
+        except Exception as e:  # noqa: BLE001 - наружу только тип (str может нести URL)
             log.exception("kb call failed")
-            send(chat_id, f"Ошибка запроса к базе знаний: {type(e).__name__}: {str(e)[:200]}")
+            send(chat_id, f"Ошибка запроса к базе знаний: {type(e).__name__}")
             return owner
         send(chat_id, answer)
         return owner
@@ -253,17 +299,19 @@ def handle(update: dict, owner: int | None) -> int | None:
     except Exception as e:  # noqa: BLE001
         log.exception("webui call failed")
         hist.pop()
-        send(chat_id, f"Ошибка запроса к модели: {type(e).__name__}: {str(e)[:200]}")
+        send(chat_id, f"Ошибка запроса к модели: {type(e).__name__}")
         return owner
     hist.append({"role": "assistant", "content": answer})
-    if SOURCE_FOOTER:
-        answer += SOURCE_FOOTER.format(model=DEFAULT_MODEL or "по умолчанию")
-    send(chat_id, answer)
+    del hist[:-HISTORY_LIMIT]
+    send(chat_id, answer, footer_model=DEFAULT_MODEL)
     return owner
 
 
 def main() -> int:
-    owner = load_owner()
+    owner = OWNER_CHAT_ID or load_owner()
+    if owner is None and not PAIR_MODE:
+        log.error("PAIR_MODE=0 и владелец не задан (OWNER_CHAT_ID/state-file) - бот был бы глух; отказ старта")
+        return 1
     me = tg("getMe")
     if not me.get("ok"):
         log.error("getMe failed: %s", str(me)[:200])

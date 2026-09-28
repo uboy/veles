@@ -132,10 +132,20 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def cmd_serve(args: argparse.Namespace) -> int:
+    import os
+
     import uvicorn
 
     from .api.app import create_app
 
+    # fail-closed: ненулевой хост без bearer-токена открывает базу всей сети
+    token = os.environ.get("VELES_API_TOKEN", "")
+    loopback = args.host in ("127.0.0.1", "localhost", "::1")
+    if not loopback and not token:
+        raise SystemExit(
+            "отказ старта: не-loopback хост без VELES_API_TOKEN молча открывает базу "
+            "в сеть (fail-closed). Задайте VELES_API_TOKEN или биндьте 127.0.0.1."
+        )
     uvicorn.run(create_app(), host=args.host, port=args.port, log_level="info")
     return 0
 
