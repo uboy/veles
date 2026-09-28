@@ -71,7 +71,7 @@ def create_item(root: Path, chat_id: int | str, kind: str, text: str,
     while any(i["id"].startswith(f"{kind}-{day}-{n:02d}-") for i in items):
         n += 1
     item_id = f"{kind}-{day}-{n:02d}-{base}"
-    title = text.strip().splitlines()[0][:120]
+    title = DUE_RE.sub("", text).strip().splitlines()[0][:120].strip()
     due = parse_due(text)
     fm = [
         "---",
