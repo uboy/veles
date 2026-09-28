@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -70,6 +71,8 @@ def build_index(
             }
         if len(texts_batch) >= batch:
             _flush(bundle, embedder, texts_batch)
+            # прогресс для длинных сборок (union-индекс ~126k узлов идёт часами)
+            print(f"[index] {len(bundle.node_meta)} узлов", file=sys.stderr, flush=True)
             texts_batch = []
     if texts_batch:
         _flush(bundle, embedder, texts_batch)
