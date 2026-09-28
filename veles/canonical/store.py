@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Iterator
@@ -12,7 +13,12 @@ from .model import CanonicalDocument, CanonicalNode
 
 def _doc_dir(document_id: str, root: Path | None = None) -> Path:
     safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in document_id)
-    return (root or CANONICAL_DIR) / safe[:120]
+    if len(safe) <= 120:
+        return (root or CANONICAL_DIR) / safe
+    # длинные id: хвост-хеш устраняет коллизии обрезки (28.09: пересказ/транскрипция
+    # одной лекции схлопывались в один каталог - документ молча терялся)
+    suffix = hashlib.sha1(document_id.encode("utf-8")).hexdigest()[:10]
+    return (root or CANONICAL_DIR) / f"{safe[:105]}-{suffix}"
 
 
 def save_document(doc: CanonicalDocument, root: Path | None = None) -> Path:
