@@ -181,12 +181,22 @@ def create_app(
         _auth(authorization)
         return {
             "object": "list",
-            "data": [{
-                "id": "veles-knowledge",
-                "object": "model",
-                "created": 1727740800,
-                "owned_by": "veles",
-            }],
+            "data": [
+                {
+                    # база знаний: answer с цитатами, вне корпуса - abstain без fallback
+                    "id": "veles-knowledge",
+                    "object": "model",
+                    "created": 1727740800,
+                    "owned_by": "veles",
+                },
+                {
+                    # KB-first: поиск в базе, при abstain - общий ответ GLM с пометкой
+                    "id": "veles-assistant",
+                    "object": "model",
+                    "created": 1727740800,
+                    "owned_by": "veles",
+                },
+            ],
         }
 
     @app.get("/v1/knowledge/stats")
@@ -231,19 +241,39 @@ def create_app(
         user_msgs = [m for m in req.messages if m.role == "user"]
         if not user_msgs:
             raise HTTPException(status_code=400, detail="нет сообщения пользователя")
+        question = user_msgs[-1].content
+        requested = (req.model or "veles-knowledge").strip()
+        # veles-assistant = KB-first c fallback: abstain -> общий ответ GLM с пометкой
+        fallback = requested == "veles-assistant"
         result = _pipeline().answer(
-            user_msgs[-1].content, top_k=5, use_llm=True,
+            question, top_k=5, use_llm=True,
             allowed_groups=state["resolver"].allowed_groups(),
         )
+        llm = _pipeline().llm
+        if result["decision"] == "answer":
+            content = render_chat_content(result)
+        elif fallback and llm and llm.enabled:
+            try:
+                general = llm.answer_general(question)
+                content = (
+                    general
+                    + "\n\n---\nВ базе знаний ответа на этот вопрос не нашлось - "
+                    "выше общий ответ модели из общих знаний, без источников. "
+                    "Вопрос по документам переформулируйте или добавьте источник в базу."
+                )
+            except Exception:  # noqa: BLE001 - fallback не удался -> честный abstain
+                content = render_chat_content(result)
+        else:
+            content = render_chat_content(result)
         rid = result["request_id"]
         return JSONResponse({
             "id": f"chatcmpl-veles-{rid}",
             "object": "chat.completion",
             "created": int(time.time()),
-            "model": req.model or "veles-knowledge",
+            "model": requested,
             "choices": [{
                 "index": 0,
-                "message": {"role": "assistant", "content": render_chat_content(result)},
+                "message": {"role": "assistant", "content": content},
                 "finish_reason": "stop",
             }],
             "veles": {
