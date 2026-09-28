@@ -91,7 +91,13 @@ class DoclingParserAdapter:
             if kind == "PictureItem":
                 img_idx += 1
                 name = f"pic-{img_idx:03d}.png"
-                caption = (getattr(it, "caption_text", "") or "").strip()
+                cap = getattr(it, "caption_text", None)
+                if callable(cap):
+                    try:
+                        cap = cap()
+                    except Exception:  # noqa: BLE001
+                        cap = None
+                caption = (str(cap) if cap else "").strip()
                 if not caption:
                     caption = last_text_head or f"Изображение {img_idx}"
                 pil = None
