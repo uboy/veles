@@ -432,7 +432,7 @@ def create_app(
             "<!doctype html><html><head><meta charset='utf-8'>",
             "<meta name='viewport' content='width=device-width, initial-scale=1'>",
             f"<title>Трекер - {chat_id}</title></head><body>",
-            f"<h1>Личный трекер ({chat_id})</h1>",
+            f"<h1>Личный трекер</h1>" + (f" <small>{chat_id}</small>" if chat_id else ""),
             "<p><i>те же данные лежат markdown-файлами в TRACKER_ROOT - открываются в Obsidian</i></p>",
             *_chat_link(root, token),
             *(_block("task", "Задачи") + _block("note", "Заметки")
