@@ -44,7 +44,7 @@ def test_fmt_sources_numbering_paren() -> None:
 
 def test_fmt_toc_number_out_of_range_and_multi_match() -> None:
     stats = make_stats()
-    # цифра вне диапазона -> честный отказ, БЕЗ падения в подстрочный поиск
+    # цифра вне диапазона -> отказ без подстрочного поиска
     assert "не найден" in bridge.fmt_toc(stats, "0")
     assert "не найден" in bridge.fmt_toc(stats, "999")
     multi = bridge.fmt_toc(stats, "Док 0")  # матчится 10 документов 00..09

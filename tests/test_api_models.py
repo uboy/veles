@@ -29,7 +29,7 @@ def test_models_respects_bearer_token() -> None:
 
 
 def _empty_retrieval_pipeline(llm):
-    """Пайплайн, где retrieval не находит ничего (честный abstain-путь)."""
+    """Пайплайн, где retrieval не находит ничего (путь abstain)."""
     from veles.indexing.indexer import IndexBundle
     from test_api import FakeEmbedder
 

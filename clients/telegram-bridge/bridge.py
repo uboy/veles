@@ -49,7 +49,7 @@ OWNER_CHAT_ID = int(os.environ.get("OWNER_CHAT_ID", "0") or 0)
 # Прямой доступ к фасаду Veles для /stats /sources /toc (оглавление базы).
 VELES_BASE_URL = os.environ.get("VELES_BASE_URL", "http://127.0.0.1:8400").rstrip("/")
 VELES_API_TOKEN = os.environ.get("VELES_API_TOKEN", "")
-# Подпись provenance на ответах базовой модели: честно показывает, что текст
+# Подпись provenance на ответах базовой модели: показывает, что текст
 # НЕ из базы знаний. Пустая переменная выключает подпись. {model} подставляется.
 SOURCE_FOOTER = os.environ.get(
     "BRIDGE_SOURCE_FOOTER",
