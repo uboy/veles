@@ -11,8 +11,10 @@ GET  /healthz
 
 from __future__ import annotations
 
+import logging
 import os
 import time
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import pydantic
@@ -33,7 +35,7 @@ EMBED_MODEL = "intfloat/multilingual-e5-small"
 
 class QueryRequest(pydantic.BaseModel):
     query: str
-    top_k: int = 5
+    top_k: int = pydantic.Field(default=5, ge=1, le=20)
     use_llm: bool = True
 
 
@@ -111,7 +113,12 @@ class VelesPipeline:
 
 def render_chat_content(result: dict) -> str:
     if result["decision"] != "answer":
-        return "Ответа на этот вопрос в базе знаний нет."
+        reason = result["diagnostics"].get("reason") or ""
+        return (
+            "Ответа на этот вопрос в базе знаний нет."
+            + (f"\nПричина: {reason}." if reason else "")
+            + "\nУточните вопрос, назовите конкретный документ или попросите добавить источник в базу."
+        )
     blocks = [result["answer"], "", "Источники:"]
     for c in result["citations"]:
         where = f", строки {c['lines'][0]}-{c['lines'][1]}" if c["lines"] else ""
@@ -123,7 +130,6 @@ def create_app(
     pipeline: Optional[VelesPipeline] = None,
     api_token: Optional[str] = None,
 ) -> FastAPI:
-    app = FastAPI(title="Veles Knowledge API", version="0.4.0")
     state = {"pipeline": pipeline, "token": api_token or os.environ.get("VELES_API_TOKEN", "")}
 
     def _pipeline() -> VelesPipeline:
@@ -133,6 +139,21 @@ def create_app(
             llm = OpenAICompatibleProvider(llm_config_from_env())
             state["pipeline"] = VelesPipeline(bundle, embedder, llm)
         return state["pipeline"]
+
+    def _warmup() -> None:
+        # Прогрев пайплайна на старте сервиса: без него первый /stats после
+        # рестарта фасада может упасть по таймауту клиента (загрузка эмбеддера).
+        try:
+            _pipeline()
+        except Exception as e:  # noqa: BLE001 - прогрев не должен ронять сервис
+            logging.getLogger("veles.api").warning("warmup не удался (соберётся лениво): %s", e)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        _warmup()
+        yield
+
+    app = FastAPI(title="Veles Knowledge API", version="0.4.0", lifespan=lifespan)
 
     def _auth(authorization: str) -> None:
         token = state["token"]

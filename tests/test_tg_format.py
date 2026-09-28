@@ -74,5 +74,18 @@ def test_split_long_text_by_paragraphs() -> None:
     assert "".join(chunks).count("Абзац") == 120
 
 
+def test_unclosed_code_fence_stashed_as_code() -> None:
+    out = format_markdown_to_html("Начало:\n```python\nx = 1")
+    assert "<pre><code>" in out
+    assert "x = 1" in out
+    assert out.count("```") == 0
+
+
+def test_placeholder_literal_collision_isolated() -> None:
+    out = format_markdown_to_html("`pwd` и литерал __INLINE_CODE_0__ в тексте")
+    assert out.count("<code>") == 1
+    assert "__INLINE_CODE_0__" in out
+
+
 def test_short_text_single_chunk() -> None:
     assert split_for_telegram("короткий", limit=3900) == ["короткий"]

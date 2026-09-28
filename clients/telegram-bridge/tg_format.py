@@ -38,6 +38,11 @@ def format_markdown_to_html(text: str) -> str:
     if not text:
         return ""
 
+    # Незакрытый code-fence: дописываем закрывающий, чтобы содержимое ушло
+    # в <pre> целиком, а не коверкалось bold/italic-регэкспами
+    if text.count("```") % 2 == 1:
+        text += "\n```"
+
     code_blocks: list[tuple[str, str]] = []
 
     def _stash_fence(match: re.Match) -> str:
@@ -73,9 +78,11 @@ def format_markdown_to_html(text: str) -> str:
     text = re.sub(r"\n{3,}", "\n\n", text)
 
     for idx, code in enumerate(inline_code):
-        text = text.replace(f"__INLINE_CODE_{idx}__", f"<code>{_esc(code)}</code>")
+        # replace по одному: литерал-плейсхолдер из текста модели не должен
+        # подхватить чужой код (коллизия плейсхолдеров)
+        text = text.replace(f"__INLINE_CODE_{idx}__", f"<code>{_esc(code)}</code>", 1)
     for idx, (_lang, code) in enumerate(code_blocks):
-        text = text.replace(f"__CODE_BLOCK_{idx}__", f"<pre><code>{_esc(code)}</code></pre>")
+        text = text.replace(f"__CODE_BLOCK_{idx}__", f"<pre><code>{_esc(code)}</code></pre>", 1)
 
     return text.strip()
 
