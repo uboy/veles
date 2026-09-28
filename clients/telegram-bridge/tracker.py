@@ -18,7 +18,14 @@ from datetime import datetime
 from pathlib import Path
 
 FRONTMATTER_RE = re.compile(r"\A---\n(.*?)\n---\n?(.*)\Z", re.DOTALL)
+DUE_RE = re.compile(r"\b(?:due|дедлайн)\s*[:=]\s*(\d{4}-\d{2}-\d{2})", re.IGNORECASE)
 MAX_LIST = 20
+
+
+def parse_due(text: str) -> str:
+    """Дедлайн из текста: 'due:2026-10-05' или 'дедлайн: 2026-10-05'."""
+    m = DUE_RE.search(text)
+    return m.group(1) if m else ""
 
 
 def _slug(text: str) -> str:
@@ -65,6 +72,7 @@ def create_item(root: Path, chat_id: int | str, kind: str, text: str,
         n += 1
     item_id = f"{kind}-{day}-{n:02d}-{base}"
     title = text.strip().splitlines()[0][:120]
+    due = parse_due(text)
     fm = [
         "---",
         f"id: {item_id}",
@@ -72,11 +80,10 @@ def create_item(root: Path, chat_id: int | str, kind: str, text: str,
         f"status: {status}",
         f"created: {now.isoformat(timespec='seconds')}",
         f"source: {source}",
-        "---",
-        "",
-        text.strip(),
-        "",
     ]
+    if due:
+        fm.append(f"due: {due}")
+    fm += ["---", "", text.strip(), ""]
     path = _user_dir(root, chat_id, kind) / f"{item_id}.md"
     path.write_text("\n".join(fm), encoding="utf-8")
     _commit(Path(root), f"{kind}: {title[:60]}")
@@ -104,6 +111,7 @@ def list_items(root: Path, chat_id: int | str, kind: str,
             "title": fields.get("title", p.stem).strip("\"'"),
             "status": fields.get("status", "todo"),
             "created": fields.get("created", ""),
+            "due": fields.get("due", ""),
             "preview": body[:100],
         })
         if len(out) >= MAX_LIST:

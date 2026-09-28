@@ -422,16 +422,24 @@ def create_app(
             for i in items:
                 raw = f"/tracker/file/{kind}/{i['id']}.md?token={quote(token)}"
                 mark = "✅" if i["status"] == "done" else "⬜"
+                due = f" ⏰ {i['due']}" if i.get("due") else ""
                 out.append(
-                    f"<p>{mark} <a href='{raw}'><b>{i['title']}</b></a> "
+                    f"<p>{mark} <a href='{raw}'><b>{i['title']}</b></a>{due} "
                     f"<small>{i['id']} · {i['status']} · {i['created'][:16]}</small></p>"
                 )
             return out
 
+        webui_url = _html.escape(os.environ.get("VELES_WEBUI_URL", ""), True)
+        top_links = []
+        if webui_url:
+            top_links.append(f"<a href='{webui_url}'>🖥 Чат (Open WebUI)</a>")
+        if chat_url:
+            top_links.append(f"<a href='{chat_url}'>💬 Telegram</a>")
         html = [
             "<!doctype html><html><head><meta charset='utf-8'>",
             "<meta name='viewport' content='width=device-width, initial-scale=1'>",
             f"<title>Трекер - {chat_id}</title></head><body>",
+            "<p>" + " · ".join(top_links) + "</p>" if top_links else "<p></p>",
             f"<h1>Личный трекер</h1>" + (f" <small>{chat_id}</small>" if chat_id else ""),
             "<p><i>те же данные лежат markdown-файлами в TRACKER_ROOT - открываются в Obsidian</i></p>",
             *_chat_link(root, token),

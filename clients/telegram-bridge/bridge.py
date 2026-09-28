@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -93,7 +94,7 @@ HELP_TEXT = (
     "/stats - сводка базы: документы, объём\n"
     "/sources - список источников\n"
     "/toc - оглавление документа: /toc и номер из /sources\n"
-    "/task текст - создать задачу (длинный текст: GLM извлечёт задачи)\n"
+    "/task текст - создать задачу с дедлайном: due:2026-10-05; длинный текст = транскрипция (GLM извлечёт задачи)\n"
     "/tasks - открытые задачи; /done часть-id - закрыть\n"
     "/note текст - заметка; /notes - последние заметки\n"
     "Обычное сообщение - вопрос к базе знаний."
@@ -391,6 +392,41 @@ def handle(update: dict, owner: int | None) -> int | None:
     return owner
 
 
+def reminder_loop() -> None:
+    """Напоминалки: задача с due сегодня/просроченная и не done -> сообщение
+    владельцу раз в сутки (метка reminded: <день> в файле)."""
+    if not TRACKER_ROOT:
+        return
+    root = Path(TRACKER_ROOT)
+    while True:
+        try:
+            today = time.strftime("%Y-%m-%d")
+            for user in root.iterdir():
+                if not user.is_dir() or user.name.startswith("."):
+                    continue
+                tdir = user / "tasks"
+                if not tdir.exists():
+                    continue
+                for p in tdir.glob("*.md"):
+                    text = p.read_text(encoding="utf-8")
+                    m = re.search(r"(?m)^due: (\d{4}-\d{2}-\d{2})$", text)
+                    if not m or m.group(1) > today or "status: done" in text:
+                        continue
+                    if f"reminded: {today}" in text:
+                        continue
+                    tm = re.search(r'(?m)^title: "?([^"\n]+?)"?$', text)
+                    try:
+                        send(int(user.name), f"⏰ Задача к сроку {m.group(1)}: "
+                             f"{tm.group(1) if tm else p.stem}")
+                    except Exception:  # noqa: BLE001 - чат мог отвалиться, не роняем цикл
+                        log.exception("reminder send failed")
+                        continue
+                    p.write_text(text + f"reminded: {today}\n", encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            log.exception("reminder loop failed")
+        time.sleep(300)
+
+
 def main() -> int:
     owner = OWNER_CHAT_ID or load_owner()
     if owner is None and not PAIR_MODE:
@@ -409,6 +445,7 @@ def main() -> int:
             )
         except OSError:
             log.warning("не смог записать chat-url.txt в TRACKER_ROOT")
+    threading.Thread(target=reminder_loop, daemon=True).start()
     menu = tg("setMyCommands", commands=TG_COMMANDS)
     if not menu.get("ok"):
         log.warning("setMyCommands failed: %s", str(menu)[:150])
