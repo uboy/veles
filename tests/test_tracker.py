@@ -12,9 +12,10 @@ import tracker
 
 def test_create_and_list_task(tmp_path) -> None:
     tid = tracker.create_item(tmp_path, 100, "task", "Подготовить отчёт по базе")
-    assert tid.startswith("task-") and "подготовить" in tid
+    assert tid.startswith("task-") and "i-" in tid  # кириллица -> хеш-слаг
     items = tracker.list_items(tmp_path, 100, "task")
     assert len(items) == 1 and items[0]["status"] == "todo"
+    assert items[0]["title"] == "Подготовить отчёт по базе"
     text = (tmp_path / "100" / "tasks" / f"{tid}.md").read_text(encoding="utf-8")
     assert "status: todo" in text and "Подготовить отчёт" in text
 

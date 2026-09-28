@@ -22,8 +22,13 @@ MAX_LIST = 20
 
 
 def _slug(text: str) -> str:
-    words = re.findall(r"[a-zA-Zа-яА-ЯёЁ0-9]+", text.lower())[:4]
-    return "-".join(words) or "item"
+    # только латиница/цифры: кириллические имена файлов ломают запись на
+    # некоторых ФС/инструментах; кириллица живёт в frontmatter title
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    slug = "-".join(words[:4])
+    if not slug:
+        slug = "i-" + hashlib.sha1(text.encode("utf-8")).hexdigest()[:8]
+    return slug
 
 
 def _git(root: Path, *args: str) -> None:
@@ -96,7 +101,7 @@ def list_items(root: Path, chat_id: int | str, kind: str,
         body = (m.group(2) or "").strip()
         out.append({
             "id": fields.get("id", p.stem),
-            "title": fields.get("title", p.stem),
+            "title": fields.get("title", p.stem).strip("\"'"),
             "status": fields.get("status", "todo"),
             "created": fields.get("created", ""),
             "preview": body[:100],
