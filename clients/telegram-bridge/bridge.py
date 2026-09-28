@@ -27,8 +27,10 @@ from pathlib import Path
 import httpx
 
 from tg_format import format_markdown_to_html, split_for_telegram, strip_html_tags
+import tracker
 
 TG_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+TRACKER_ROOT = os.environ.get("TRACKER_ROOT", "")
 TG_API = f"https://api.telegram.org/bot{TG_TOKEN}"
 WEBUI_BASE = os.environ.get("OPENWEBUI_BASE_URL", "http://127.0.0.1:8300").rstrip("/")
 WEBUI_KEY = os.environ.get("OPENWEBUI_API_KEY", "")
@@ -91,9 +93,13 @@ HELP_TEXT = (
     "/stats - сводка базы: документы, объём\n"
     "/sources - список источников\n"
     "/toc - оглавление документа: /toc и номер из /sources\n"
-    "Обычное сообщение - общий чат с GLM (ответы помечены, что без базы знаний)."
+    "/task текст - создать задачу (длинный текст: GLM извлечёт задачи)\n"
+    "/tasks - открытые задачи; /done часть-id - закрыть\n"
+    "/note текст - заметка; /notes - последние заметки\n"
+    "Обычное сообщение - вопрос к базе знаний."
 )
-KNOWN_COMMANDS = {"/start", "/new", "/help", "/kb", "/stats", "/sources", "/toc"}
+KNOWN_COMMANDS = {"/start", "/new", "/help", "/kb", "/stats", "/sources", "/toc",
+                  "/task", "/tasks", "/done", "/note", "/notes"}
 TG_COMMANDS = [
     {"command": "new", "description": "Сброс контекста диалога"},
     {"command": "help", "description": "Справка по командам"},
@@ -101,6 +107,11 @@ TG_COMMANDS = [
     {"command": "stats", "description": "Сводка базы знаний"},
     {"command": "sources", "description": "Список источников"},
     {"command": "toc", "description": "Оглавление документа: /toc <номер>"},
+    {"command": "task", "description": "Создать задачу: /task текст"},
+    {"command": "tasks", "description": "Мои открытые задачи"},
+    {"command": "done", "description": "Закрыть задачу: /done <часть id>"},
+    {"command": "note", "description": "Заметка: /note текст"},
+    {"command": "notes", "description": "Последние заметки"},
 ]
 
 
@@ -304,6 +315,57 @@ def handle(update: dict, owner: int | None) -> int | None:
             send(chat_id, f"Ошибка запроса к базе знаний: {type(e).__name__}")
             return owner
         send(chat_id, answer)
+        return owner
+
+    if text in ("/task", "/note") or text.startswith(("/task ", "/note ")):
+        kind = text[:5].strip().lstrip("/")
+        body = text[5:].strip()
+        if not body:
+            send(chat_id, f"Использование: /{kind} текст")
+            return owner
+        if not TRACKER_ROOT:
+            send(chat_id, "Трекер не настроен (TRACKER_ROOT).")
+            return owner
+        if len(body) > 1500:
+            source = "transcript"
+            try:
+                tasks = tracker.extract_tasks(
+                    lambda prompt: webui_chat(
+                        [{"role": "user", "content": prompt}], "veles-knowledge"
+                    ),
+                    body,
+                )
+            except Exception as e:  # noqa: BLE001
+                log.exception("task extraction failed")
+                tasks = []
+            if not tasks:
+                send(chat_id, "Задач в тексте не нашлось (или LLM недоступен).")
+                return owner
+            ids = [tracker.create_item(Path(TRACKER_ROOT), chat_id, "task", t,
+                                        source=source) for t in tasks]
+            send(chat_id, "Извлечённые задачи:\n" +
+                 "\n".join(f"• {t} ({i.split('-', 3)[-1]})" for t, i in zip(tasks, ids)))
+            return owner
+        item_id = tracker.create_item(Path(TRACKER_ROOT), chat_id, kind, body)
+        send(chat_id, f"Создано: {item_id}")
+        return owner
+
+    if text in ("/tasks", "/notes") or text.startswith("/done "):
+        kind = "task" if text == "/tasks" or text.startswith("/done") else "note"
+        if not TRACKER_ROOT:
+            send(chat_id, "Трекер не настроен (TRACKER_ROOT).")
+            return owner
+        if text.startswith("/done "):
+            send(chat_id, tracker.set_status(Path(TRACKER_ROOT), chat_id, "task",
+                                             text[6:].strip(), "done"))
+            return owner
+        items = tracker.list_items(Path(TRACKER_ROOT), chat_id, kind)
+        if not items:
+            send(chat_id, "Пока пусто.")
+            return owner
+        lines = [f"• [{i['status']}] {i['id']} - {i['title']}" for i in items]
+        send(chat_id, f"{'Открытые задачи' if kind == 'task' else 'Заметки'}:\n" +
+             "\n".join(lines))
         return owner
 
     if text.startswith("/") and text.split(" ", 1)[0] not in KNOWN_COMMANDS:
