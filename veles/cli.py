@@ -76,7 +76,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             skipped += 1
             continue
         doc = parser.parse_file(path, corpus_root=CORPUS_ROOT)
-        save_document(doc)
+        save_document(doc, by=args.by)
         docs += 1
         nodes += len(doc.nodes)
         print(f"  {doc.document_id}: {len(doc.nodes)} узлов")
@@ -171,6 +171,7 @@ def main() -> int:
     p.set_defaults(func=cmd_scan_corpus)
 
     p = sub.add_parser("ingest", help="корпус -> канон (manifest.json + nodes.jsonl)")
+    p.add_argument("--by", default="", help="кто загружает (логин/почта); иначе env VELES_INGESTED_BY")
     p.add_argument("--no-manifest-check", action="store_true",
                    help="не сверять файлы с allowlist-манифестом (по умолчанию сверка включена)")
     p.set_defaults(func=cmd_ingest)

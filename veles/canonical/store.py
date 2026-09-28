@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Iterator
 
@@ -21,7 +22,27 @@ def _doc_dir(document_id: str, root: Path | None = None) -> Path:
     return (root or CANONICAL_DIR) / f"{safe[:105]}-{suffix}"
 
 
-def save_document(doc: CanonicalDocument, root: Path | None = None) -> Path:
+def save_document(
+    doc: CanonicalDocument,
+    root: Path | None = None,
+    by: str | None = None,
+    audit_log: Path | None = None,
+) -> Path:
+    """Сохранить документ + дописать событие загрузки в append-only журнал аудита.
+
+    by - кто загрузил (логин/почта из аутентификации; для старых ручных конвейеров -
+    значение VELES_INGESTED_BY или "unknown"). audit_log - путь к журналу (по умолчанию
+    <корень канона>/../ingest-audit.jsonl). Журнал только дописывается, события -
+    единственный полный след «кто/когда/что» по всем загрузкам."""
+    from datetime import datetime, timezone
+
+    if not doc.ingested_at:
+        doc.ingested_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if not doc.ingested_by:
+        doc.ingested_by = (
+            by or os.environ.get("VELES_INGESTED_BY", "").strip() or "unknown"
+        )
+
     d = _doc_dir(doc.document_id, root)
     d.mkdir(parents=True, exist_ok=True)
     # nodes.jsonl ПЕРВЫМ, manifest последним (ревью-2: убитый процесс не оставит
@@ -35,6 +56,23 @@ def save_document(doc: CanonicalDocument, root: Path | None = None) -> Path:
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (d / "manifest.tmp").replace(d / "manifest.json")
+
+    log_path = audit_log or (d.parent / "ingest-audit.jsonl")
+    try:
+        event = {
+            "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "event": "ingest",
+            "document_id": doc.document_id,
+            "revision_id": doc.revision_id,
+            "sha256": doc.sha256,
+            "status": doc.status,
+            "by": doc.ingested_by,
+            "dir": d.name,
+        }
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError:  # noqa: BLE001 - журнал не должен ломать сохранение канона
+        pass
     return d
 
 

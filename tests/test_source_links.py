@@ -20,6 +20,7 @@ def _make_canon(tmp_path):
         json.dumps({"title": "Тестовый документ", "document_id": "lectures/x.txt",
                     "revision_id": "r1", "parser_profile": "txt-md:0.1",
                     "access_groups": ["personal"], "sha256": "a", "status": "current",
+                    "ingested_at": "2026-09-28T10:00:00+00:00", "ingested_by": "denis@corp",
                     "derived_from": []}, ensure_ascii=False),
         encoding="utf-8",
     )
@@ -84,3 +85,12 @@ def test_citations_and_footnotes_are_links():
     assert "](http://127.0.0.1:8400/v1/source/lectures/x.txt?token=tk&node=nv1)" in out
     assert "](http://127.0.0.1:8400/v1/source/lectures/k.txt?token=tk&node=nv2)" in out
     assert out.count("](http://") == 4  # 2 сноски + 2 строки источников
+
+
+def test_source_shows_ingest_metadata(tmp_path, monkeypatch):
+    _make_canon(tmp_path)
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    client = TestClient(create_app(pipeline=None, api_token="t"))
+    r = client.get("/v1/source/lectures/x.txt", params={"token": "t"})
+    assert r.status_code == 200
+    assert "2026-09-28T10:00:00" in r.text and "denis@corp" in r.text

@@ -53,6 +53,9 @@ class CanonicalDocument(BaseModel):
     parser_profile: str
     access_groups: list[str] = Field(default_factory=lambda: ["personal"])
     derived_from: list[str] = Field(default_factory=list)
+    # кто и когда загрузил документ (аудит загрузки; корпус до 28.09 - без этих полей)
+    ingested_at: Optional[str] = None
+    ingested_by: Optional[str] = None
     nodes: list[CanonicalNode] = Field(default_factory=list)
 
     @staticmethod

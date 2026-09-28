@@ -255,6 +255,10 @@ def create_app(
             f"<h1>{doc.get('title', document_id)}</h1>",
             f"<p><i>{document_id} · {doc.get('parser_profile', '')} · "
             f"фрагментов: {len(nodes)}</i></p>",
+            "<p><small>загружен: "
+            f"{doc.get('ingested_at') or 'дата не зафиксирована'}"
+            + (f" · {doc['ingested_by']}" if doc.get("ingested_by") else "")
+            + "</small></p>",
         ]
         for nd in nodes:
             if nd.get("node_type") == "root":
