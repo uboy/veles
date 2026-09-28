@@ -16,7 +16,7 @@ def test_create_and_list_task(tmp_path) -> None:
     items = tracker.list_items(tmp_path, 100, "task")
     assert len(items) == 1 and items[0]["status"] == "todo"
     assert items[0]["title"] == "Подготовить отчёт по базе"
-    text = (tmp_path / "100" / "tasks" / f"{tid}.md").read_text(encoding="utf-8")
+    text = (tmp_path / "100" / "task" / f"{tid}.md").read_text(encoding="utf-8")
     assert "status: todo" in text and "Подготовить отчёт" in text
 
 
