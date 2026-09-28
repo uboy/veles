@@ -28,17 +28,22 @@ def get_pipeline() -> VelesPipeline:
 
 
 def run() -> None:
-    from mcp.server.fastmcp import FastMCP
+    # mcp 1.x: FastMCP в mcp.server.fastmcp; mcp >= 2.0: класс переименован
+    # в MCPServer (API декоратора .tool() и run(transport='stdio') сохранён).
+    try:
+        from mcp.server.fastmcp import FastMCP
+        server = FastMCP("veles")
+    except ImportError:
+        from mcp.server import MCPServer
+        server = MCPServer(name="veles")
 
-    mcp = FastMCP("veles")
-
-    @mcp.tool()
+    @server.tool()
     def knowledge_query(query: str, top_k: int = 5) -> dict:
         """Задать вопрос базе знаний veles. Возвращает решение (answer/abstain),
         ответ с цитатами (файл/строки) и evidence-фрагменты."""
         return get_pipeline().answer(query, top_k=top_k, use_llm=False)
 
-    mcp.run()
+    server.run()
 
 
 if __name__ == "__main__":

@@ -83,6 +83,27 @@ def save_owner(chat_id: int) -> None:
     log.info("owner paired: chat %s -> %s", chat_id, STATE_FILE)
 
 
+HELP_TEXT = (
+    "Личный ассистент + база знаний.\n"
+    "/help - эта справка\n"
+    "/new - сброс контекста диалога\n"
+    "/kb - вопрос к базе знаний, ответ с источниками\n"
+    "/stats - сводка базы: документы, объём\n"
+    "/sources - список источников\n"
+    "/toc - оглавление документа: /toc и номер из /sources\n"
+    "Обычное сообщение - общий чат с GLM (ответы помечены, что без базы знаний)."
+)
+KNOWN_COMMANDS = {"/start", "/new", "/help", "/kb", "/stats", "/sources", "/toc"}
+TG_COMMANDS = [
+    {"command": "new", "description": "Сброс контекста диалога"},
+    {"command": "help", "description": "Справка по командам"},
+    {"command": "kb", "description": "Вопрос к базе знаний (с источниками)"},
+    {"command": "stats", "description": "Сводка базы знаний"},
+    {"command": "sources", "description": "Список источников"},
+    {"command": "toc", "description": "Оглавление документа: /toc <номер>"},
+]
+
+
 def tg(method: str, **params: object) -> dict:
     r = tg_client.post(f"{TG_API}/{method}", json=params)
     data = r.json()
@@ -235,8 +256,7 @@ def handle(update: dict, owner: int | None) -> int | None:
     if owner is None:
         if PAIR_MODE and text.startswith("/start"):
             save_owner(chat_id)
-            send(chat_id, "Бот спарен с этим чатом. Пишите вопрос; /new - сброс контекста; "
-                          "/kb <вопрос> - вопрос в базу знаний.")
+            send(chat_id, "Бот спарен с этим чатом. " + HELP_TEXT)
             return chat_id
         log.warning("drop message from unpaired chat %s", chat_id)
         return owner
@@ -244,11 +264,8 @@ def handle(update: dict, owner: int | None) -> int | None:
         log.warning("drop message from non-owner chat %s", chat_id)
         return owner
 
-    if text == "/start":
-        send(chat_id, "Готов. Пишите вопрос; /new - сброс контекста; "
-                      "/kb <вопрос> - вопрос в базу знаний; "
-                      "/stats - сводка базы; /sources - источники; "
-                      "/toc <номер> - оглавление документа.")
+    if text in ("/start", "/help"):
+        send(chat_id, HELP_TEXT)
         return owner
     if text == "/new":
         histories.pop(chat_id, None)
@@ -289,6 +306,11 @@ def handle(update: dict, owner: int | None) -> int | None:
         send(chat_id, answer)
         return owner
 
+    if text.startswith("/") and text.split(" ", 1)[0] not in KNOWN_COMMANDS:
+        # неизвестная команда не уходит модели как обычный вопрос
+        send(chat_id, f"Неизвестная команда {text.split(' ', 1)[0]}. " + HELP_TEXT)
+        return owner
+
     hist = histories.setdefault(chat_id, [])
     hist.append({"role": "user", "content": text})
     try:
@@ -316,6 +338,9 @@ def main() -> int:
     if not me.get("ok"):
         log.error("getMe failed: %s", str(me)[:200])
         return 1
+    menu = tg("setMyCommands", commands=TG_COMMANDS)
+    if not menu.get("ok"):
+        log.warning("setMyCommands failed: %s", str(menu)[:150])
     import re as _re
 
     proxy_masked = _re.sub(r"//[^@/]+@", "//***@", TG_PROXY) if TG_PROXY else "direct"
