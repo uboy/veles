@@ -22,17 +22,22 @@ import logging
 import os
 import re
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
 
 import httpx
 
+import voice
 from tg_format import format_markdown_to_html, split_for_telegram, strip_html_tags
 import tracker
 
 TG_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TRACKER_ROOT = os.environ.get("TRACKER_ROOT", "")
+VOXFUSION_API_URL = os.environ.get("VOXFUSION_API_URL", "http://127.0.0.1:8500")
+VOXFUSION_API_TOKEN = os.environ.get("VOXFUSION_API_TOKEN", "")
+VOICE_PENDING: set[int] = set()  # чаты, чьё следующее голосовое идёт в задачи (/vt)
 TG_API = f"https://api.telegram.org/bot{TG_TOKEN}"
 WEBUI_BASE = os.environ.get("OPENWEBUI_BASE_URL", "http://127.0.0.1:8300").rstrip("/")
 WEBUI_KEY = os.environ.get("OPENWEBUI_API_KEY", "")
@@ -98,6 +103,7 @@ HELP_TEXT = (
     "/task текст - создать задачу с дедлайном: due:2026-10-05; длинный текст = транскрипция (GLM извлечёт задачи)\n"
     "/tasks - открытые задачи; /done часть-id - закрыть\n"
     "/note текст - заметка; /notes - последние заметки\n"
+    "/vt - следующее голосовое будет разобрано на задачи\n"
     "Обычное сообщение - вопрос к базе знаний."
 )
 KNOWN_COMMANDS = {"/start", "/new", "/help", "/kb", "/stats", "/sources", "/toc",
@@ -114,6 +120,7 @@ TG_COMMANDS = [
     {"command": "done", "description": "Закрыть задачу: /done <часть id>"},
     {"command": "note", "description": "Заметка: /note текст"},
     {"command": "notes", "description": "Последние заметки"},
+    {"command": "vt", "description": "Следующее голосовое -> задачи"},
 ]
 
 
@@ -167,6 +174,60 @@ def apply_footer(answer_html: str, model: str) -> str:
     if not SOURCE_FOOTER:
         return answer_html
     return answer_html + SOURCE_FOOTER.replace("{model}", model or "по умолчанию")
+
+
+def handle_voice(chat_id: int, voice_msg: dict) -> None:
+    """Голосовое/аудио -> voxfusion-api -> текст (или задачи при /vt)."""
+    if not VOXFUSION_API_TOKEN:
+        send(chat_id, "Транскрибация не настроена (VOXFUSION_API_TOKEN).")
+        return
+    was_pending = chat_id in VOICE_PENDING
+    VOICE_PENDING.discard(chat_id)
+    duration = int(voice_msg.get("duration") or 0)
+    send(chat_id, f"Распознаю аудио ({duration} с)... это займёт до "
+                  f"{max(1, duration // 2)} с.")
+    tmpdir = Path(tempfile.mkdtemp(prefix="veles-voice-"))
+    try:
+        try:
+            audio = voice.download_tg_voice(tg_client, voice_msg["file_id"], tmpdir)
+        except Exception as e:  # noqa: BLE001
+            log.exception("voice download failed")
+            send(chat_id, f"Не смог скачать аудио: {type(e).__name__}")
+            return
+        try:
+            job_id = voice.submit_job(veles_client, audio, language="ru")
+        except Exception as e:  # noqa: BLE001
+            log.exception("asr submit failed")
+            send(chat_id, f"Сервис транскрибации недоступен: {type(e).__name__}")
+            return
+    finally:
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    timeout_s = max(300.0, 3.0 * duration)
+    status, text = voice.poll_result(veles_client, job_id, timeout_s)
+    if status == "timeout":
+        send(chat_id, "Транскрибация ещё идёт - результат будет позже через "
+                      "сервис voxfusion-api (job " + job_id + ").")
+        return
+    if status != "done":
+        send(chat_id, f"Транскрибация не удалась: {text[:200]}")
+        return
+    if was_pending:
+        tasks = tracker.extract_tasks(
+            lambda prompt: webui_chat([{"role": "user", "content": prompt}],
+                                      "veles-knowledge"),
+            text,
+        )
+        if not tasks:
+            send(chat_id, "Задач в аудио не нашлось. Текст: " + text[:3000])
+            return
+        for t in tasks:
+            tracker.create_item(Path(TRACKER_ROOT), chat_id, "task", t, source="transcript")
+        send(chat_id, "Задачи из аудио: " + "; ".join(tasks))
+        return
+    for i, chunk in enumerate(split_for_telegram(text, limit=3400)):
+        send(chat_id, ("Транскрипция: " + chunk) if i == 0 else chunk)
 
 
 IMG_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
@@ -289,7 +350,11 @@ def handle(update: dict, owner: int | None) -> int | None:
     msg = update.get("message") or {}
     chat_id = (msg.get("chat") or {}).get("id")
     text = (msg.get("text") or "").strip()[:MAX_MESSAGE_CHARS]
-    if not chat_id or not text:
+    voice_msg = msg.get("voice") or msg.get("audio")
+    if not chat_id or (not text and not voice_msg):
+        return owner
+    if voice_msg:
+        handle_voice(chat_id, voice_msg)
         return owner
 
     if owner is None:
@@ -395,6 +460,15 @@ def handle(update: dict, owner: int | None) -> int | None:
         lines = [f"• [{i['status']}] {i['id']} - {i['title']}" for i in items]
         send(chat_id, f"{'Открытые задачи' if kind == 'task' else 'Заметки'}:\n" +
              "\n".join(lines))
+        return owner
+
+    if text == "/vt":
+        if not VOXFUSION_API_TOKEN:
+            send(chat_id, "Транскрибация не настроена (VOXFUSION_API_TOKEN).")
+            return owner
+        VOICE_PENDING.add(chat_id)
+        send(chat_id, "Жду голосовое - пришлите его следующим сообщением, "
+                      "я распознаю и создам задачи.")
         return owner
 
     if text.startswith("/") and text.split(" ", 1)[0] not in KNOWN_COMMANDS:
