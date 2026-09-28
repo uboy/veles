@@ -21,7 +21,7 @@ CHUNK_LIMIT = 3900
 
 _CODE_FENCE = re.compile(r"```([a-zA-Z0-9+_-]*)\n?(.*?)```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`([^`]+?)`")
-_MD_IMAGE = re.compile(r"![\[^\]]\]\](https?://[^)\s]+\)")
+_MD_IMAGE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
 _MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
 
