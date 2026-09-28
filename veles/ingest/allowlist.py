@@ -32,6 +32,24 @@ VYSHKA_MODULE1 = {
     ),
 }
 
+# Вышка, 2 курс Модуль_1: курс «Управление производством» (добавлено 28.09 по
+# отзыву владельца - вопросы про производственный менеджмент не покрывались).
+VYSHKA_UM = {
+    "name": "vyshka-um-production-mgmt",
+    "root": Path(
+        r"<local-pc>\OneDrive\MyDocs\diffdocs\Вышка\02_Модули\2_курс\Модуль_1\Управление производством"
+    ),
+    "dest": Path("05_vyshka_academic/lectures/Управление производством"),
+    "dir_include": re.compile(r".", re.DOTALL),  # все подкаталоги курса
+    "file_include": re.compile(r"(транскрипция|пересказ)", re.IGNORECASE),
+    "file_ext": {".txt"},
+    "path_exclude": re.compile(
+        r"ДЗ|Оценк|ведомост|00_Админ|01_Оргинфо|приказ|договор", re.IGNORECASE
+    ),
+}
+
+SPECS = {"module1": VYSHKA_MODULE1, "um": VYSHKA_UM}
+
 
 class ManifestEntry(BaseModel):
     source_path: str

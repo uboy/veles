@@ -21,6 +21,7 @@ CHUNK_LIMIT = 3900
 
 _CODE_FENCE = re.compile(r"```([a-zA-Z0-9+_-]*)\n?(.*?)```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`([^`]+?)`")
+_MD_LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
 
 
 def _esc(text: str) -> str:
@@ -65,6 +66,16 @@ def format_markdown_to_html(text: str) -> str:
 
     text = _INLINE_CODE.sub(_stash_inline, text)
 
+    # markdown-ссылки [текст](url) -> <a href="url">текст</a> (Telegram HTML);
+    # url прячем от экранирования, в href экранируем только &amp;
+    md_links: list[tuple[str, str]] = []
+
+    def _stash_link(match: re.Match) -> str:
+        md_links.append((match.group(1), match.group(2).replace("&", "&amp;")))
+        return f"__MD_LINK_{len(md_links) - 1}__"
+
+    text = _MD_LINK.sub(_stash_link, text)
+
     text = _esc(text)
 
     text = re.sub(r"^\s*#{1,6}\s+(.+?)(?=\n|$)", r"<b>\1</b>", text, flags=re.MULTILINE)
@@ -81,6 +92,10 @@ def format_markdown_to_html(text: str) -> str:
         # replace по одному: литерал-плейсхолдер из текста модели не должен
         # подхватить чужой код (коллизия плейсхолдеров)
         text = text.replace(f"__INLINE_CODE_{idx}__", f"<code>{_esc(code)}</code>", 1)
+    for idx, (label, url) in enumerate(md_links):
+        text = text.replace(
+            f"__MD_LINK_{idx}__", f"<a href=\"{url}\">{_esc(label)}</a>", 1
+        )
     for idx, (_lang, code) in enumerate(code_blocks):
         text = text.replace(f"__CODE_BLOCK_{idx}__", f"<pre><code>{_esc(code)}</code></pre>", 1)
 

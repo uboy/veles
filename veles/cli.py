@@ -12,7 +12,7 @@ from pathlib import Path
 from .canonical.store import iter_documents
 from .canonical.store import save_document
 from .config import CANONICAL_DIR, CORPUS_ROOT, EMBED_DIM, EMBED_MODEL, INDEX_DIR
-from .ingest.allowlist import scan_and_copy
+from .ingest.allowlist import SPECS, scan_and_copy
 from .ingest.txt_md import TxtMdParserAdapter
 from .indexing.bm25 import Bm25Index  # noqa: F401 (реэкспорт для типа)
 from .indexing.embedder import SentenceTransformersProvider
@@ -24,7 +24,10 @@ from .retrieval.retriever import hybrid_search
 
 
 def cmd_scan_corpus(args: argparse.Namespace) -> int:
-    m = scan_and_copy(copy=not args.dry)
+    from .ingest.allowlist import SPECS
+
+    spec = SPECS[args.spec]
+    m = scan_and_copy(spec=spec, copy=not args.dry)
     print(f"манифест: {m.name} @ {m.created_at}")
     print(f"включено: {m.stats['included_files']} файлов ({m.stats['included_bytes']} байт), "
           f"скопировано сейчас: {m.stats['copied_now']}, чёрный список: {m.stats['excluded_by_blacklist']}, "
@@ -162,6 +165,8 @@ def main() -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     p = sub.add_parser("scan-corpus", help="allowlist-скан Вышки -> копии в корпус + манифест")
+    p.add_argument("--spec", default="module1", choices=sorted(SPECS),
+                   help="module1 = 1 курс Модуль_1, um = Управление производством (2 курс)")
     p.add_argument("--dry", action="store_true", help="только манифест, без копирования")
     p.set_defaults(func=cmd_scan_corpus)
 

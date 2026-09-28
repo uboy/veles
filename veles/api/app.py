@@ -15,13 +15,15 @@ import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 import pydantic
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
-from ..config import INDEX_DIR
+from ..config import INDEX_DIR, VELES_PUBLIC_URL, VELES_SOURCE_ROOTS
 from ..indexing.embedder import SentenceTransformersProvider
 from ..indexing.indexer import IndexBundle, load_index
 from ..policy.answer import decide
@@ -32,6 +34,13 @@ from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
 
 EMBED_DIM = 384
 EMBED_MODEL = "intfloat/multilingual-e5-small"
+
+
+def source_url(document_id: str, node_version_id: str, token: str) -> str:
+    """Ссылка на источник для цитаты (открывается в отдельной вкладке)."""
+    q = f"token={quote(token)}&node={quote(node_version_id)}" if token else (
+        f"node={quote(node_version_id)}")
+    return f"{VELES_PUBLIC_URL}/v1/source/{quote(document_id, safe=chr(47))}?{q}"
 
 
 class QueryRequest(pydantic.BaseModel):
@@ -85,6 +94,8 @@ class VelesPipeline:
                 "source_id": c.source_id,
                 "lines": c.lines,
                 "heading_path": c.heading_path,
+                "document_id": c.document_id,
+                "node_version_id": c.node_version_id,
             })
             evidence_texts.append(ev.text)
 
@@ -115,7 +126,7 @@ class VelesPipeline:
         }
 
 
-def render_chat_content(result: dict) -> str:
+def render_chat_content(result: dict, token: str = "") -> str:
     if result["decision"] != "answer":
         reason = result["diagnostics"].get("reason") or ""
         return (
@@ -123,10 +134,28 @@ def render_chat_content(result: dict) -> str:
             + (f"\nПричина: {reason}." if reason else "")
             + "\nУточните вопрос, назовите конкретный документ или попросите добавить источник в базу."
         )
-    blocks = [result["answer"], "", "Источники:"]
+    links = {
+        c["n"]: source_url(c["document_id"], c["node_version_id"], token)
+        for c in result.get("citations", [])
+        if c.get("document_id") and c.get("node_version_id")
+    }
+    import re as _re
+
+    answer = result["answer"]
+    if links:
+        # сноски [n] в тексте синтеза -> кликабельные markdown-ссылки
+        answer = _re.sub(
+            r"\[(\d{1,2})\]",
+            lambda m: f"[{m.group(1)}]({links[int(m.group(1))]})" if int(m.group(1)) in links else m.group(0),
+            answer,
+        )
+    blocks = [answer, "", "Источники:"]
     for c in result["citations"]:
-        where = f", строки {c['lines'][0]}-{c['lines'][1]}" if c["lines"] else ""
-        blocks.append(f"  [{c['n']}] «{c['title']}» {c['source_id']}{where}")
+        where = f", строки {c['lines'][0]}-{c['lines'][1]}" if c.get("lines") else ""
+        label = f"[{c['n']}] «{c['title']}» {c['source_id']}{where}"
+        url = links.get(c["n"])
+        blocks.append(f"  [{c['n']}]({url}) «{c['title']}» {c['source_id']}{where}" if url
+                      else f"  {label}")
     return "\n".join(blocks)
 
 
@@ -169,6 +198,75 @@ def create_app(
         token = state["token"]
         if token and authorization != f"Bearer {token}":
             raise HTTPException(status_code=401, detail="unauthorized")
+
+    @app.get("/v1/source/{document_id:path}")
+    def source_view(
+        document_id: str,
+        token: str = "",
+        node: str = "",
+        authorization: str = Header(default=""),
+    ):
+        """Источник в отдельной вкладке: оригинал (txt/md/pdf) из VELES_SOURCE_ROOTS,
+        иначе текстовая сборка из канона. Авторизация: bearer ИЛИ token=<...> в query
+        (ссылки из цитат не могут передавать заголовки)."""
+        state_token = state["token"]
+        if state_token and token != state_token and authorization != f"Bearer {state_token}":
+            raise HTTPException(status_code=401, detail="unauthorized")
+
+        from ..canonical.store import _doc_dir
+
+        roots = [Path(p) for p in os.environ.get("VELES_DATA", "").split(":") if p.strip()]
+        if not roots:
+            roots = [Path(__file__).resolve().parents[2] / "data"]
+        doc = None
+        for data_root in roots:
+            for canon in sorted(data_root.glob("canonical*")):
+                d = _doc_dir(document_id, canon)
+                if (d / "manifest.json").exists():
+                    import json as _json
+
+                    doc = _json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+                    doc["_dir"] = d
+                    doc["_nodes_path"] = d / "nodes.jsonl"
+                    break
+            if doc:
+                break
+        if doc is None:
+            raise HTTPException(status_code=404, detail="источник не найден в каноне")
+
+        basename = document_id.rsplit("/", 1)[-1]
+        for root_dir in VELES_SOURCE_ROOTS:
+            for candidate in root_dir.rglob(basename):
+                if candidate.is_file():
+                    media = "application/pdf" if candidate.suffix.lower() == ".pdf" else (
+                        "text/plain; charset=utf-8"
+                    )
+                    return FileResponse(candidate, media_type=media, filename=basename)
+
+        nodes = []
+        for line in doc["_nodes_path"].read_text(encoding="utf-8").splitlines():
+            if line.strip():
+                nodes.append(_json.loads(line))
+        anchor = f'n-{node}' if node else ""
+        parts = [
+            "<!doctype html><html><head><meta charset='utf-8'>",
+            f"<title>{doc.get('title', document_id)}</title></head><body>",
+            f"<h1>{doc.get('title', document_id)}</h1>",
+            f"<p><i>{document_id} · {doc.get('parser_profile', '')} · "
+            f"фрагментов: {len(nodes)}</i></p>",
+        ]
+        for nd in nodes:
+            if nd.get("node_type") == "root":
+                continue
+            parts.append(
+                f"<a id='n-{nd['node_version_id']}'></a>"
+                f"<p><b>{' > '.join(nd.get('heading_path') or [])}</b><br>{nd.get('text', '')}</p>"
+            )
+        parts.append(
+            f"<script>var a = document.getElementById('{anchor}');"
+            "if (a) a.scrollIntoView({block: 'start'});</script></body></html>"
+        )
+        return HTMLResponse("\n".join(parts), status_code=200)
 
     @app.get("/healthz")
     def healthz() -> dict:
@@ -251,7 +349,7 @@ def create_app(
         )
         llm = _pipeline().llm
         if result["decision"] == "answer":
-            content = render_chat_content(result)
+            content = render_chat_content(result, token=state["token"])
         elif fallback and llm and llm.enabled:
             try:
                 general = llm.answer_general(question)
@@ -262,9 +360,9 @@ def create_app(
                     "Вопрос по документам переформулируйте или добавьте источник в базу."
                 )
             except Exception:  # noqa: BLE001 - fallback не удался -> честный abstain
-                content = render_chat_content(result)
+                content = render_chat_content(result, token=state["token"])
         else:
-            content = render_chat_content(result)
+            content = render_chat_content(result, token=state["token"])
         rid = result["request_id"]
         return JSONResponse({
             "id": f"chatcmpl-veles-{rid}",

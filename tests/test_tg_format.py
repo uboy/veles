@@ -87,5 +87,12 @@ def test_placeholder_literal_collision_isolated() -> None:
     assert "__INLINE_CODE_0__" in out
 
 
+def test_md_links_become_telegram_anchors() -> None:
+    out = format_markdown_to_html("Сноска [1](http://host/v1/source/a?token=x&node=y) и текст")
+    assert '<a href="http://host/v1/source/a?token=x&amp;node=y">1</a>' in out
+    assert "__MD_LINK" not in out
+    assert "[1]" not in out.replace('<a href', '', 1)
+
+
 def test_short_text_single_chunk() -> None:
     assert split_for_telegram("короткий", limit=3900) == ["короткий"]

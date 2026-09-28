@@ -24,6 +24,18 @@ EMBED_DIM = 384
 
 DEFAULT_ACCESS_GROUPS = {"personal"}
 
+# Публичный URL фасада для ссылок на источники в цитатах (виден клиентам:
+# веб-чат, Telegram с телефона). На стенд: http://<bench-lan-ip>:8400
+VELES_PUBLIC_URL = os.environ.get("VELES_PUBLIC_URL", "http://127.0.0.1:8400").rstrip("/")
+
+# Корни с оригиналами L0 для GET /v1/source (разделитель os.pathsep: ':' на linux).
+# Пусто - источник отдаётся текстовой сборкой из канона.
+VELES_SOURCE_ROOTS = [
+    Path(p)
+    for p in os.environ.get("VELES_SOURCE_ROOTS", "").split(os.pathsep)
+    if p.strip()
+]
+
 # RRF и AnswerPolicy (provisional; калибровка - фаза 2)
 RRF_K = 60
 ABSTAIN_CONFIDENCE = 0.55
