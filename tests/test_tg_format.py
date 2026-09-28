@@ -96,3 +96,9 @@ def test_md_links_become_telegram_anchors() -> None:
 
 def test_short_text_single_chunk() -> None:
     assert split_for_telegram("короткий", limit=3900) == ["короткий"]
+
+
+def test_image_markdown_stripped_from_text() -> None:
+    out = format_markdown_to_html("Ответ текстом. ![фото](http://host/img.png)")
+    assert "img.png" not in out and "![" not in out
+    assert "Ответ текстом." in out

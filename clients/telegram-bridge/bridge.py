@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -166,6 +167,32 @@ def apply_footer(answer_html: str, model: str) -> str:
     if not SOURCE_FOOTER:
         return answer_html
     return answer_html + SOURCE_FOOTER.replace("{model}", model or "по умолчанию")
+
+
+IMG_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
+
+
+def send_images(chat_id: int, content: str) -> None:
+    """Картинки из markdown-ответа -> sendPhoto (до 3, до 9 МБ каждая).
+    Файлы скачиваются с фасада обычным HTTP (без прокси Telegram)."""
+    for url in IMG_RE.findall(content)[:3]:
+        try:
+            r = veles_client.get(url)
+            r.raise_for_status()
+            data = r.content
+            if not data or len(data) > 9 * 1024 * 1024:
+                continue
+        except Exception:  # noqa: BLE001
+            log.exception("image download failed")
+            continue
+        try:
+            tg_client.post(
+                f"{TG_API}/sendPhoto",
+                data={"chat_id": str(chat_id)},
+                files={"photo": ("image.png", data, "image/png")},
+            )
+        except httpx.HTTPError:
+            log.exception("sendPhoto failed")
 
 
 def send(chat_id: int, text: str, footer_model: str = "") -> None:
@@ -316,6 +343,7 @@ def handle(update: dict, owner: int | None) -> int | None:
             send(chat_id, f"Ошибка запроса к базе знаний: {type(e).__name__}")
             return owner
         send(chat_id, answer)
+        send_images(chat_id, answer)
         return owner
 
     if text in ("/task", "/note") or text.startswith(("/task ", "/note ")):
@@ -389,6 +417,7 @@ def handle(update: dict, owner: int | None) -> int | None:
     hist.append({"role": "assistant", "content": answer})
     del hist[:-HISTORY_LIMIT]
     send(chat_id, answer, footer_model=DEFAULT_MODEL)
+    send_images(chat_id, answer)
     return owner
 
 

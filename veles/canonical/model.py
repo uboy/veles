@@ -30,12 +30,13 @@ class Provenance(BaseModel):
 class CanonicalNode(BaseModel):
     logical_node_id: str
     node_version_id: str
-    node_type: Literal["root", "section", "paragraph"] = "paragraph"
+    node_type: Literal["root", "section", "paragraph", "image"] = "paragraph"
     parent_id: Optional[str] = None
     heading_path: list[str] = Field(default_factory=list)
     text: str
     provenance: Provenance
     access_groups: list[str] = Field(default_factory=lambda: ["personal"])
+    asset: Optional[str] = None  # имя файла актива в <doc_dir>/assets/ (узел-картинка)
 
     @staticmethod
     def make_version_id(revision_id: str, logical_node_id: str, text: str) -> str:
@@ -56,6 +57,9 @@ class CanonicalDocument(BaseModel):
     # кто и когда загрузил документ (аудит загрузки; корпус до 28.09 - без этих полей)
     ingested_at: Optional[str] = None
     ingested_by: Optional[str] = None
+    # активы (картинки): имя -> путь. У запарсенного в памяти - временный путь;
+    # после save_document в манифесте - относительный "assets/<имя>"
+    assets: dict[str, str] = Field(default_factory=dict)
     nodes: list[CanonicalNode] = Field(default_factory=list)
 
     @staticmethod

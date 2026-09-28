@@ -37,6 +37,11 @@ EMBED_DIM = 384
 EMBED_MODEL = "intfloat/multilingual-e5-small"
 
 
+def asset_url(document_id: str, name: str, token: str) -> str:
+    return (f"{VELES_PUBLIC_URL}/v1/asset/{quote(document_id, safe='/')}/{quote(name)}"
+            f"?token={quote(token)}")
+
+
 def source_url(document_id: str, node_version_id: str, token: str) -> str:
     """Ссылка на источник для цитаты (открывается в отдельной вкладке)."""
     q = f"token={quote(token)}&node={quote(node_version_id)}" if token else (
@@ -89,6 +94,7 @@ class VelesPipeline:
         citations, evidence_texts = [], []
         for i, ev in enumerate(decision.evidence[:top_k]):
             c = ev.citations[0]
+            nmeta = self.bundle.node_meta.get(ev.node_version_id) or {}
             citations.append({
                 "n": i + 1,
                 "title": c.title,
@@ -97,6 +103,7 @@ class VelesPipeline:
                 "heading_path": c.heading_path,
                 "document_id": c.document_id,
                 "node_version_id": c.node_version_id,
+                "asset": nmeta.get("asset"),
             })
             evidence_texts.append(ev.text)
 
@@ -140,6 +147,11 @@ def render_chat_content(result: dict, token: str = "") -> str:
         for c in result.get("citations", [])
         if c.get("document_id") and c.get("node_version_id")
     }
+    images = [
+        asset_url(c["document_id"], c["asset"], token)
+        for c in result.get("citations", [])
+        if c.get("asset") and c.get("document_id")
+    ]
     import re as _re
 
     answer = result["answer"]
@@ -157,6 +169,8 @@ def render_chat_content(result: dict, token: str = "") -> str:
         url = links.get(c["n"])
         blocks.append(f"  [{c['n']}]({url}) «{c['title']}» {c['source_id']}{where}" if url
                       else f"  {label}")
+    for url in images:
+        blocks.append(f"![изображение]({url})")
     return "\n".join(blocks)
 
 
@@ -206,6 +220,27 @@ def create_app(
         token = state["token"]
         if token and authorization != f"Bearer {token}":
             raise HTTPException(status_code=401, detail="unauthorized")
+
+    @app.get("/v1/asset/{document_id:path}/{name}")
+    def asset_file(document_id: str, name: str, token: str = "",
+                   authorization: str = Header(default="")):
+        """Актив документа (картинка) - для показа в ответах веба и Telegram."""
+        state_token = state["token"]
+        if state_token and token != state_token and authorization != f"Bearer {state_token}":
+            raise HTTPException(status_code=401, detail="unauthorized")
+        if not re.fullmatch(r"[\w.-]+", name):
+            raise HTTPException(status_code=400, detail="bad asset name")
+        from ..canonical.store import _doc_dir
+
+        roots = [Path(q) for q in os.environ.get("VELES_DATA", "").split(os.pathsep) if q.strip()]
+        if not roots:
+            roots = [Path(__file__).resolve().parents[2] / "data"]
+        for data_root in roots:
+            for canon in sorted(data_root.glob("canonical*")):
+                f = _doc_dir(document_id, canon) / "assets" / name
+                if f.exists():
+                    return FileResponse(f, media_type="image/png", filename=name)
+        raise HTTPException(status_code=404, detail="актив не найден")
 
     @app.get("/v1/source/{document_id:path}")
     def source_view(

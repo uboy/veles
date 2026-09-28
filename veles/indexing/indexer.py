@@ -68,6 +68,7 @@ def build_index(
                 "provenance": node.provenance.model_dump(),
                 "access_groups": node.access_groups,
                 "sha256_doc": doc.sha256,
+                "asset": node.asset,
             }
         if len(texts_batch) >= batch:
             _flush(bundle, embedder, texts_batch)

@@ -29,6 +29,10 @@ class DoclingParserAdapter:
         opts = PdfPipelineOptions()
         opts.do_ocr = False  # текстовый слой есть; OCR - отдельное решение
         opts.generate_page_images = False
+        # картинки документа -> активы (требование владельца 28.09: релевантная
+        # картинка показывается в ответе; распознавание её содержимого не требуется)
+        opts.generate_picture_images = True
+        opts.images_scale = 2  # ~144 dpi
         conv = DocumentConverter(
             format_options={InputFormat.PDF: PdfFormatOption(pipeline_options=opts)}
         )
@@ -45,6 +49,8 @@ class DoclingParserAdapter:
             sha256=CanonicalDocument.compute_sha256(raw_bytes),
             parser_profile=self.parser_profile,
         )
+        assets_dir = Path(__import__("tempfile").mkdtemp(prefix="veles-assets-"))
+        assets: dict[str, str] = {}
         document.add_node(
             logical_node_id=f"{rel}#root",
             node_type="root",
@@ -73,11 +79,50 @@ class DoclingParserAdapter:
                 ),
             )
 
+        last_text_head = ""
+        img_idx = 0
+
         for item in d.iterate_items():
             it = item[0] if isinstance(item, tuple) else item
             kind = type(it).__name__
             prov = getattr(it, "prov", None)
             page = prov[0].page_no if prov and len(prov) else None
+
+            if kind == "PictureItem":
+                img_idx += 1
+                name = f"pic-{img_idx:03d}.png"
+                caption = (getattr(it, "caption_text", "") or "").strip()
+                if not caption:
+                    caption = last_text_head or f"Изображение {img_idx}"
+                pil = None
+                img_ref = getattr(it, "image", None)
+                if img_ref is not None:
+                    pil = getattr(img_ref, "pil_image", None)
+                    if pil is None and hasattr(img_ref, "_pil_image"):
+                        pil = img_ref._pil_image
+                if pil is None:
+                    img_idx -= 1
+                    continue
+                try:
+                    pil.save(assets_dir / name, format="PNG")
+                except Exception:  # noqa: BLE001 - битая картинка не роняет парс
+                    img_idx -= 1
+                    continue
+                assets[name] = str(assets_dir / name)
+                idx += 1
+                document.add_node(
+                    logical_node_id=f"{rel}#img{img_idx:03d}",
+                    node_type="image",
+                    parent_id=f"{rel}#s{section_idx:04d}",
+                    heading_path=list(section_path),
+                    text=f"Изображение. {caption}"[:500],
+                    provenance=Provenance(
+                        adapter=self.parser_profile, source_id=rel, page=page
+                    ),
+                    asset=name,
+                )
+                continue
+            last_text_head = (" ".join((getattr(it, "text", "") or "").split()))[:120]
 
             if kind == "SectionHeaderItem":
                 section_idx += 1
@@ -112,6 +157,7 @@ class DoclingParserAdapter:
                     )
             elif kind in ("TextItem", "ListItem", "CaptionItem", "FootnoteItem"):
                 add_par(getattr(it, "text", "") or "", page)
-            #-picture/MetaItem и прочее игнорируются в срезе Ф3
+            #-MetaItem и прочее игнорируется; PictureItem обрабатывается выше
 
+        document.assets = assets
         return document

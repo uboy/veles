@@ -52,6 +52,17 @@ def save_document(
             f.write(json.dumps(node.model_dump(), ensure_ascii=False) + "\n")
     (d / "nodes.jsonl.tmp").replace(d / "nodes.jsonl")
     manifest = doc.model_dump(exclude={"nodes"})
+    if doc.assets:
+        import shutil
+
+        adir = d / "assets"
+        adir.mkdir(exist_ok=True)
+        persisted = {}
+        for name, src in doc.assets.items():
+            safe_name = Path(name).name
+            shutil.copyfile(src, adir / safe_name)
+            persisted[name] = f"assets/{safe_name}"
+        manifest["assets"] = persisted
     (d / "manifest.tmp").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
     )
