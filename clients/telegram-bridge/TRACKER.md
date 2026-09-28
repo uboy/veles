@@ -13,7 +13,7 @@ Telegram (Android/iOS/Desktop)
 veles-telegram-bridge (systemd, стенд)  ── напоминалки: поток в процессе моста,
    │  пишет/читает                      проверка каждые 5 мин, сообщение при due ≤ сегодня
    ▼
-TRACKER_ROOT = <server-home>/veles-tracker          ◄── git-репозиторий (автокоммит)
+TRACKER_ROOT = ~/veles-tracker (env TRACKER_ROOT)          ◄── git-репозиторий (автокоммит)
    └── <chat_id>/                    на пользователя (id чата Telegram)
        ├── task/task-YYYYMMDD-NN-slug.md
        └── note/note-YYYYMMDD-NN-slug.md
@@ -85,7 +85,7 @@ due: 2026-10-03             # опционально
 
 | Канал | Как |
 |---|---|
-| Obsidian (ПК) | открыть `<server-home>/veles-tracker` как vault: SMB-шара стенд (порт 445) или git clone + плагин Obsidian Git |
+| Obsidian (ПК) | открыть `~/veles-tracker` (TRACKER_ROOT) как vault: SMB-шара стенд (порт 445) или git clone + плагин Obsidian Git |
 | Obsidian (Android) | синк папки (Syncthing/MobileGit) → Obsidian mobile открывает |
 | Веб | ссылка `/tracker?token=` с любого устройства в сети |
 | Jira | фаза 2 (импорт/выгрузка задач), интерфейс - бэклог карточки |

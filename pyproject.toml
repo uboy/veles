@@ -10,12 +10,18 @@ requires-python = ">=3.11"
 dependencies = [
     "numpy>=1.26",
     "pydantic>=2.6",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
 st = ["sentence-transformers>=3.0"]
 faiss = ["faiss-cpu>=1.8"]
 qdrant = ["qdrant-client>=1.10"]
+
+[project.scripts]
+veles = "veles.cli:main"
 
 [tool.setuptools.packages.find]
 include = ["veles*"]

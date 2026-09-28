@@ -105,12 +105,12 @@ z.ai-вызовов 3 из 6** (B7, E2, E3 — короткие, по одном
   окружения, не регрессия кода Ф4.
 
 ### G1: ночной бэкап не работает — скрипт не установлен
-- **Факт:** cron-строка есть (`30 3 * * * <server-home>/bin/veles-backup.sh >> …`), но
-  `<server-home>/bin/veles-backup.sh` **отсутствует** (в `~/bin/` его нет), `~/veles-backup.log`
+- **Факт:** cron-строка есть (`30 3 * * * ~/bin/veles-backup.sh >> …`), но
+  `~/bin/veles-backup.sh` **отсутствует** (в `~/bin/` его нет), `~/veles-backup.log`
   нет, каталога `~/backups` нет — ни одного бэкапа не создано. Скрипт в репо есть:
   `deploy/стенд/veles-backup.sh`.
 - **Починка владельцу:** установить скрипт по пути из cron
-  (`install -m 755 deploy/стенд/veles-backup.sh <server-home>/bin/veles-backup.sh`) и проверить
+  (`install -m 755 deploy/стенд/veles-backup.sh ~/bin/veles-backup.sh`) и проверить
   ручным прогоном; после этого пункт G1 зеленеет тем же скриптом (`--only G1`).
 
 ## 6. Регрессия полного тест-набора

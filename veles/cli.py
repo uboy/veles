@@ -62,6 +62,12 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     nodes = 0
     skipped = 0
     corpus_dir = CORPUS_ROOT / "05_vyshka_academic" / "lectures"
+    if not corpus_dir.is_dir():
+        raise SystemExit(
+            f"корпус не найден: {corpus_dir}\n"
+            "источники в ingest не попадут сами - положите копии файлов в корень корпуса "
+            "(env VELES_CORPUS_ROOT, по умолчанию ~/veles-data/corpus) и повторите"
+        )
     known = set() if args.no_manifest_check else _manifest_known_relpaths()
     if not known and not args.no_manifest_check:
         raise SystemExit("манифесты allowlist пусты/отсутствуют - ingest запрещён (fail-closed)")

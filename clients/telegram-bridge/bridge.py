@@ -6,11 +6,9 @@ Telegram-клиент поверх Open WebUI: base-модель - GLM чере�
 Персональный бот: при PAIR_MODE=1 первый /start становится владельцем (state file),
 сообщения других чатов игнорируются.
 
-Egress в Telegram: из офисной сети стенд api.telegram.org закрыт DPI - трафик идёт через
-HTTPS CONNECT-прокси на <vps-provider> (dumbproxy за HAProxy :443, переменная TG_PROXY,
-напр. https://user:pass@<ddns-name>:443). WebUI и z.ai доступны напрямую.
-
-Запуск (см. deploy/стенд/veles-telegram-bridge.service):
+Egress в Telegram: если сеть с фильтрацией api.telegram.org - трафик идёт через
+HTTPS CONNECT-прокси (переменная TG_PROXY, напр. https://user:pass@host:port),
+WebUI и LLM-провайдер доступны напрямую. Запуск (см. deploy/):
   python clients/telegram-bridge/bridge.py
 Секреты и конфиг - только через окружение (EnvironmentFile), не в репозитории.
 """

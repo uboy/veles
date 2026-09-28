@@ -1,0 +1,78 @@
+# docker-compose.yml - corporate-профиль deploy-kit veles.
+# Ставится install.sh (--profile corporate). Переменные - из .env рядом с этим файлом.
+#
+# Базовый состав: veles-facade + open-webui.
+# Опционально (compose-профили): telegram-bridge - включается флагом
+# install.sh --with-bridge. Транскрипция (voxfusion-api) - отдельный внешний
+# сервис: укажите VOXFUSION_API_URL/VOXFUSION_API_TOKEN в .env, мост ходит в него сам.
+#
+# Данные - bind-каталоги рядом с compose-файлом (./data), uninstall.sh --purge-data их удаляет.
+
+services:
+  veles-facade:
+    build:
+      context: ..
+      dockerfile: deploy/kit/Dockerfile
+    image: veles-facade:local
+    restart: unless-stopped
+    # фасад НЕ публикуется наружу: адресуем только внутри compose-сети
+    # (http://veles-facade:8400, ходит Open WebUI). Наружу - только Open WebUI.
+    expose:
+      - "8400"
+    env_file:
+      - .env
+    environment:
+      # внутри контейнера данные всегда /data (bind ./data)
+      VELES_DATA: /data
+      VELES_PUBLIC_URL: ${VELES_PUBLIC_URL:-http://127.0.0.1:8400}
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8400/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+    command: ["python", "-m", "veles", "serve", "--host", "0.0.0.0", "--port", "8400"]
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:v0.11.4
+    restart: unless-stopped
+    ports:
+      - "${VELES_WEBUI_PORT:-8300}:8080"
+    environment:
+      WEBUI_NAME: ${WEBUI_NAME:-Veles}
+      WEBUI_SECRET_KEY: ${WEBUI_SECRET_KEY:-}
+      ENABLE_API_KEY: "true"
+      ENABLE_SIGNUP: ${ENABLE_SIGNUP:-false}
+      DEFAULT_MODELS: ${DEFAULT_MODELS:-veles-knowledge}
+      ENABLE_FORWARD_USER_INFO_HEADERS: ${ENABLE_FORWARD_USER_INFO_HEADERS:-false}
+      FORWARD_USER_INFO_HEADER_JWT_SECRET: ${FORWARD_USER_INFO_HEADER_JWT_SECRET:-}
+      OPENAI_API_BASE_URLS: ${OPENAI_API_BASE_URLS:-http://veles-facade:8400/v1}
+      OPENAI_API_KEYS: ${OPENAI_API_KEYS:-${VELES_API_TOKEN:-}}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./data/webui:/app/backend/data
+    depends_on:
+      veles-facade:
+        condition: service_healthy
+
+  telegram-bridge:
+    build:
+      context: ..
+      dockerfile: deploy/kit/Dockerfile.bridge
+    image: veles-telegram-bridge:local
+    restart: unless-stopped
+    profiles: ["bridge"]
+    env_file:
+      - .env
+    environment:
+      TRACKER_ROOT: /tracker
+      BRIDGE_STATE_FILE: /state/bridge-state.json
+      OPENWEBUI_BASE_URL: http://open-webui:8080
+    volumes:
+      - ./data/tracker:/tracker
+      - ./data/bridge:/state
+    depends_on:
+      - open-webui

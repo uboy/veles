@@ -94,7 +94,22 @@ def test_ingest_fail_closed_without_manifests(tmp_path, monkeypatch, capsys):
 
     from veles import cli
 
+    # каталог корпуса существует - SystemExit должен прийти именно из сверки манифестов
+    (tmp_path / "05_vyshka_academic" / "lectures").mkdir(parents=True)
     monkeypatch.setattr(cli, "CORPUS_ROOT", tmp_path)
     monkeypatch.setattr(cli, "_manifest_known_relpaths", lambda: set())
-    with pytest.raises(SystemExit):
+    with pytest.raises(SystemExit) as exc:
         cli.cmd_ingest(argparse.Namespace(no_manifest_check=False))
+    assert "манифесты" in str(exc.value)
+
+
+def test_ingest_fail_closed_without_corpus(tmp_path, monkeypatch):
+    """K5: без корпуса (env не задан, каталога нет) - понятная ошибка с подсказкой."""
+    import argparse
+
+    from veles import cli
+
+    monkeypatch.setattr(cli, "CORPUS_ROOT", tmp_path / "no-such-corpus")
+    with pytest.raises(SystemExit) as exc:
+        cli.cmd_ingest(argparse.Namespace(no_manifest_check=False))
+    assert "VELES_CORPUS_ROOT" in str(exc.value)

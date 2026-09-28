@@ -1,0 +1,15 @@
+# deploy/kit/Dockerfile.bridge - образ Telegram-моста (compose-профиль bridge).
+# git внутри нужен: TRACKER_ROOT автокоммитит каждое изменение карточек.
+FROM python:3.11-slim
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+RUN pip install --no-cache-dir httpx
+
+COPY clients/telegram-bridge ./clients/telegram-bridge
+
+WORKDIR /app/clients/telegram-bridge
+CMD ["python", "bridge.py"]

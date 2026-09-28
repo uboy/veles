@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-# Корень корпуса источников (только копии исходников, без производных данных)
+# Корень корпуса источников (только копии исходников, без производных данных).
+# Без env - ~/veles-data/corpus (общий корень данных veles); машинных путей в коде нет.
 CORPUS_ROOT = Path(
-    os.environ.get("VELES_CORPUS_ROOT", r"<local-pc>\proj\knowledge-sources")
+    os.environ.get("VELES_CORPUS_ROOT", str(Path.home() / "veles-data" / "corpus"))
 )
 
 # Рантайм-данные veles (canonical store, индексы) - вне репозитория источников
@@ -25,7 +26,7 @@ EMBED_DIM = 384
 DEFAULT_ACCESS_GROUPS = {"personal"}
 
 # Публичный URL фасада для ссылок на источники в цитатах (виден клиентам:
-# веб-чат, Telegram с телефона). На стенд: http://<bench-lan-ip>:8400
+# веб-чат, Telegram с телефона). Задаётся через VELES_PUBLIC_URL.
 VELES_PUBLIC_URL = os.environ.get("VELES_PUBLIC_URL", "http://127.0.0.1:8400").rstrip("/")
 
 # Корни с оригиналами L0 для GET /v1/source (разделитель os.pathsep: ':' на linux).
