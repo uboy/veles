@@ -16,10 +16,12 @@ class Citation:
     source_id: str
     lines: list[int] | None
     node_version_id: str
+    revision_id: str = "r1"  # ревизия документа (K3); у канона до 29.09 - r1
 
     def human(self) -> str:
         where = f", строки {self.lines[0]}-{self.lines[1]}" if self.lines else ""
-        return f"«{self.title}» {self.source_id}{where}"
+        rev = f", ред. {self.revision_id}" if self.revision_id not in ("", "r1") else ""
+        return f"«{self.title}» {self.source_id}{rev}{where}"
 
 
 @dataclass
@@ -38,16 +40,26 @@ def hybrid_search(
     query_text: str,
     top_k: int = 8,
     allowed_groups: set[str] | None = None,
+    revision: str | None = None,
 ) -> list[Evidence]:
-    """Pre-retrieval authorization (инвариант 5): узлы без пересечения групп с
-    allowed_groups отсекаются до формирования evidence и не попадают в контекст."""
+    """Pre-retrieval authorization (инвариант 5) + ревизионный фильтр (K3) - один шов:
+    узлы без пересечения групп с allowed_groups отсекаются до формирования evidence
+    и не попадают в контекст; revision=None (дефолт) - только status=current,
+    revision="all" - без ревизионного фильтра, revision="r<n>" - только эта ревизия.
+    Мета без полей ревизий (индексы до 29.09) считается current/r1."""
     from ..config import DEFAULT_ACCESS_GROUPS
 
     groups = allowed_groups or DEFAULT_ACCESS_GROUPS
 
     def authorized(nid: str) -> bool:
         meta = bundle.node_meta.get(nid)
-        return bool(meta) and bool(set(meta.get("access_groups", [])) & groups)
+        if not meta or not (set(meta.get("access_groups", [])) & groups):
+            return False
+        if revision == "all":
+            return True
+        if revision is None or revision == "current":
+            return meta.get("status", "current") == "current"
+        return meta.get("revision_id", "r1") == revision
 
     dense = [(nid, s) for nid, s in bundle.vector.search(query_vec, top_k=top_k * 5) if authorized(nid)]
     lex = [(nid, s) for nid, s in bundle.bm25.search(query_text, top_k=top_k * 5) if authorized(nid)]
@@ -75,6 +87,7 @@ def hybrid_search(
             source_id=prov["source_id"],
             lines=prov.get("lines"),
             node_version_id=nid,
+            revision_id=meta.get("revision_id", "r1"),
         )
         evidence.append(
             Evidence(

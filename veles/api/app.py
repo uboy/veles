@@ -82,6 +82,8 @@ class QueryRequest(pydantic.BaseModel):
     query: str
     top_k: int = pydantic.Field(default=5, ge=1, le=20)
     use_llm: bool = True
+    # ревизии (K3): None/"current" - только текущие, "all" - все, "r<n>" - указанная
+    revision: Optional[str] = None
 
 
 class ChatMessage(pydantic.BaseModel):
@@ -92,6 +94,25 @@ class ChatMessage(pydantic.BaseModel):
 class ChatRequest(pydantic.BaseModel):
     model: Optional[str] = None
     messages: list[ChatMessage]
+    revision: Optional[str] = None
+
+
+def _resolve_revision(bundle: IndexBundle, revision: Optional[str]) -> Optional[str]:
+    """Валидация параметра revision (K3): None/'current' -> дефолт (только current),
+    'all' -> без фильтра, 'r<n>' -> только эта ревизия. Синтаксически невалидное
+    значение или ревизия, отсутствующая в индексе, - 400."""
+    if not revision or revision == "current":
+        return None
+    if revision == "all":
+        return "all"
+    if not re.fullmatch(r"r\d+", revision):
+        raise HTTPException(
+            status_code=400, detail="revision: ожидается 'all', 'current' или 'r<номер>'"
+        )
+    known = {m.get("revision_id", "r1") for m in bundle.node_meta.values()}
+    if revision not in known:
+        raise HTTPException(status_code=400, detail=f"неизвестная ревизия: {revision}")
+    return revision
 
 
 class VelesPipeline:
@@ -108,10 +129,12 @@ class VelesPipeline:
     def answer(
         self, query: str, top_k: int = 5, use_llm: bool = True,
         allowed_groups: Optional[set[str]] = None,
+        revision: Optional[str] = None,
     ) -> dict:
         qvec = self.embedder.embed_query(query)
         evidence = hybrid_search(
             self.bundle, qvec, query, top_k=top_k, allowed_groups=allowed_groups,
+            revision=revision,
         )
         decision = decide(
             evidence,
@@ -132,12 +155,13 @@ class VelesPipeline:
                 "heading_path": c.heading_path,
                 "document_id": c.document_id,
                 "node_version_id": c.node_version_id,
+                "revision_id": nmeta.get("revision_id", "r1"),
                 "asset": nmeta.get("asset"),
             })
             evidence_texts.append(ev.text)
 
         answer, llm_used, llm_error = "", False, None
-        if decision.decision == "answer":
+        if decision.decision in ("answer", "warn_conflict"):
             answer = evidence_texts[0]
             if use_llm and self.llm and self.llm.enabled:
                 try:
@@ -159,6 +183,7 @@ class VelesPipeline:
                 "reason": decision.reason,
                 "llm_used": llm_used,
                 "llm_error": llm_error,
+                "conflicts": decision.conflicts,
             },
         }
 
@@ -168,7 +193,7 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
     ссылка живёт LINK_TTL_S - браузер не передаёт заголовки личности)."""
     signed = bool(link_secret)
     exp = int(time.time()) + LINK_TTL_S if signed else 0
-    if result["decision"] != "answer":
+    if result["decision"] not in ("answer", "warn_conflict"):
         reason = result["diagnostics"].get("reason") or ""
         return (
             "Ответа на этот вопрос в базе знаний нет."
@@ -215,6 +240,18 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
                       else f"  {label}")
     for url in images:
         blocks.append(f"![изображение]({url})")
+    if result["decision"] == "warn_conflict":
+        conflicts = result.get("diagnostics", {}).get("conflicts") or []
+        if conflicts:
+            listing = "; ".join(
+                f"«{c.get('title') or c.get('document_id')}» ({c.get('revision_id')}, {c.get('signal')})"
+                for c in conflicts
+            )
+            blocks += [
+                "",
+                f"⚠ Возможны противоречащие редакции: {listing}.",
+                "Уточните, какая редакция вам нужна.",
+            ]
     return "\n".join(blocks)
 
 
@@ -495,7 +532,12 @@ def create_app(
         _identity(request, authorization)
         p = _pipeline()
         docs: dict[str, dict] = {}
+        superseded_nodes = 0
         for m in p.bundle.node_meta.values():
+            # ревизии (K3): superseded-узлы в оглавление и totals.nodes не входят
+            if m.get("status", "current") == "superseded":
+                superseded_nodes += 1
+                continue
             did = m.get("document_id") or "(без документа)"
             d = docs.setdefault(
                 did, {"document_id": did, "title": m.get("title") or did, "nodes": 0, "sections": set()}
@@ -508,7 +550,12 @@ def create_app(
         for d in doc_list:
             d["sections"] = sorted(d["sections"])
         return {
-            "totals": {"documents": len(doc_list), "nodes": len(p.bundle.node_meta)},
+            "totals": {
+                "documents": len(doc_list),
+                "nodes": len(p.bundle.node_meta) - superseded_nodes,
+                # число superseded-узлов в индексе (бриф K3)
+                "superseded_nodes": superseded_nodes,
+            },
             "embed_model": EMBED_MODEL,
             "documents": doc_list,
         }
@@ -518,9 +565,11 @@ def create_app(
         req: QueryRequest, request: Request, authorization: str = Header(default="")
     ) -> dict:
         ident = _identity(request, authorization)
-        return _pipeline().answer(
+        p = _pipeline()
+        revision = _resolve_revision(p.bundle, req.revision)
+        return p.answer(
             req.query, req.top_k, req.use_llm,
-            allowed_groups=ident.groups,
+            allowed_groups=ident.groups, revision=revision,
         )
 
     @app.post("/v1/chat/completions")
@@ -533,17 +582,19 @@ def create_app(
             raise HTTPException(status_code=400, detail="нет сообщения пользователя")
         question = user_msgs[-1].content
         requested = (req.model or "veles-knowledge").strip()
+        p = _pipeline()
+        revision = _resolve_revision(p.bundle, req.revision)
         # veles-assistant = KB-first c fallback: abstain -> общий ответ GLM с пометкой
         fallback = requested == "veles-assistant"
-        result = _pipeline().answer(
+        result = p.answer(
             question, top_k=5, use_llm=True,
-            allowed_groups=ident.groups,
+            allowed_groups=ident.groups, revision=revision,
         )
-        llm = _pipeline().llm
+        llm = p.llm
         link_secret = (
             state["link_secret"] if state["identity_mode"] != "static" else ""
         )
-        if result["decision"] == "answer":
+        if result["decision"] in ("answer", "warn_conflict"):
             content = render_chat_content(
                 result, token=state["token"], link_secret=link_secret
             )

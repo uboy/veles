@@ -40,3 +40,8 @@ VELES_SOURCE_ROOTS = [
 # RRF и AnswerPolicy (provisional; калибровка - фаза 2)
 RRF_K = 60
 ABSTAIN_CONFIDENCE = 0.55
+# warn_conflict (K3, реализуемый минимум): топ-2 доказательства считаются
+# кандидатами в конфликт только при сопоставимом score - дельта нормализованного
+# score (RRF/потолок двух каналов, шкала 0..1) меньше; на сыром RRF порог 0.05
+# невыполним (максимум RRF ~ 0.033)
+CONFLICT_SCORE_DELTA = 0.05

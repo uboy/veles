@@ -54,6 +54,9 @@ class CanonicalDocument(BaseModel):
     parser_profile: str
     access_groups: list[str] = Field(default_factory=lambda: ["personal"])
     derived_from: list[str] = Field(default_factory=list)
+    # ревизии (K3): id предыдущей ревизии при повторном ингесте изменённого документа;
+    # у первой ревизии и у канона до 29.09 - None
+    previous_revision: Optional[str] = None
     # кто и когда загрузил документ (аудит загрузки; корпус до 28.09 - без этих полей)
     ingested_at: Optional[str] = None
     ingested_by: Optional[str] = None
@@ -77,3 +80,14 @@ class CanonicalDocument(BaseModel):
         )
         self.nodes.append(node)
         return node
+
+    def retag_revision(self, revision_id: str) -> None:
+        """Смена revision_id у спарсенного документа (повторный ингест, K3).
+
+        node_version_id включает revision_id, поэтому без пересчёта узлы новой
+        ревизии столкнулись бы ключами с узлами архивной в общем индексе."""
+        self.revision_id = revision_id
+        for node in self.nodes:
+            node.node_version_id = CanonicalNode.make_version_id(
+                revision_id, node.logical_node_id, node.text
+            )

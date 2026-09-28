@@ -14,7 +14,8 @@ def test_stats_shape_and_totals() -> None:
     r = client.get("/v1/knowledge/stats")
     assert r.status_code == 200
     d = r.json()
-    assert d["totals"] == {"documents": 2, "nodes": 2}
+    # K3: totals дополнился superseded_nodes (число superseded-узлов в индексе)
+    assert d["totals"] == {"documents": 2, "nodes": 2, "superseded_nodes": 0}
     assert d["embed_model"]
     titles = {doc["title"] for doc in d["documents"]}
     assert titles == {"Пересказ Общий менеджмент", "Коучинг"}

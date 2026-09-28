@@ -47,7 +47,7 @@ def build_index(
     bundle.identifiers = set()
     texts_batch: list[tuple[str, str]] = []  # (node_version_id, text)
 
-    for doc in iter_documents():
+    for doc in iter_documents(include_revisions=True):
         bundle.identifiers |= set(extract_identifiers(doc.title))
         bundle.identifiers |= {
             i for n in doc.nodes if n.node_type != "root" for i in extract_identifiers(n.text)
@@ -69,6 +69,10 @@ def build_index(
                 "access_groups": node.access_groups,
                 "sha256_doc": doc.sha256,
                 "asset": node.asset,
+                # ревизии (K3): у меты текущих ревизий status=current, у архивных
+                # (revision-r*/ в каноне) - superseded; фильтр - в hybrid_search
+                "revision_id": doc.revision_id,
+                "status": doc.status,
             }
         if len(texts_batch) >= batch:
             _flush(bundle, embedder, texts_batch)

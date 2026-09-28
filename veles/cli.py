@@ -9,8 +9,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from .canonical.store import iter_documents
-from .canonical.store import save_document
+from .canonical.store import ingest_document, iter_documents
 from .config import CANONICAL_DIR, CORPUS_ROOT, EMBED_DIM, EMBED_MODEL, INDEX_DIR
 from .ingest.allowlist import SPECS, scan_and_copy
 from .ingest.txt_md import TxtMdParserAdapter
@@ -61,6 +60,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     docs = 0
     nodes = 0
     skipped = 0
+    updated = 0
+    unchanged = 0
     corpus_dir = CORPUS_ROOT / "05_vyshka_academic" / "lectures"
     if not corpus_dir.is_dir():
         raise SystemExit(
@@ -82,11 +83,21 @@ def cmd_ingest(args: argparse.Namespace) -> int:
             skipped += 1
             continue
         doc = parser.parse_file(path, corpus_root=CORPUS_ROOT)
-        save_document(doc, by=args.by)
+        outcome = ingest_document(doc, by=args.by)
         docs += 1
         nodes += len(doc.nodes)
-        print(f"  {doc.document_id}: {len(doc.nodes)} узлов")
-    print(f"итого: документов={docs}, узлов={nodes}, пропущено мимо конвейера={skipped} -> {CANONICAL_DIR}")
+        if outcome.action == "updated":
+            updated += 1
+            print(f"  {doc.document_id}: обновлён до {outcome.revision_id}, "
+                  f"предыдущая {outcome.previous_revision} сохранена")
+        elif outcome.action == "unchanged":
+            unchanged += 1
+            print(f"  {doc.document_id}: без изменений")
+        else:
+            print(f"  {doc.document_id}: {len(doc.nodes)} узлов")
+    print(f"итого: документов={docs} (новых={docs - updated - unchanged}, "
+          f"обновлено={updated}, без изменений={unchanged}), узлов={nodes}, "
+          f"пропущено мимо конвейера={skipped} -> {CANONICAL_DIR}")
     return 0
 
 
@@ -118,7 +129,7 @@ def cmd_ask(args: argparse.Namespace) -> int:
         known_identifiers=bundle.identifiers,
     )
     print(f"решение: {decision.decision.upper()} (доверие {decision.confidence}; {decision.reason})")
-    if decision.decision == "answer":
+    if decision.decision in ("answer", "warn_conflict"):
         top = decision.evidence[0]
         print(f"ответ (текст узла, {len(top.text)} знаков):\n{top.text}\n")
         print("цитаты:")
@@ -126,6 +137,10 @@ def cmd_ask(args: argparse.Namespace) -> int:
             for c in ev.citations:
                 hp = " > ".join(c.heading_path[-3:]) if c.heading_path else ""
                 print(f"  - {c.human()} {('| ' + hp) if hp else ''}")
+    if decision.conflicts:
+        print("возможные противоречащие редакции:")
+        for c in decision.conflicts:
+            print(f"  - «{c['title']}» {c['document_id']} ({c['revision_id']}): {c['signal']}")
     print("diagnostics:")
     for ev in decision.evidence[:3]:
         print(f"  {ev.node_version_id[:40]} rrf={ev.rrf:.4f} dense={ev.dense_rank} bm25={ev.bm25_rank}")
@@ -134,8 +149,12 @@ def cmd_ask(args: argparse.Namespace) -> int:
 
 def cmd_status(args: argparse.Namespace) -> int:
     docs = list(iter_documents())
+    all_revs = list(iter_documents(include_revisions=True))
+    archived = len(all_revs) - len(docs)
     print(f"корпус: {CORPUS_ROOT}")
-    print(f"канон: {len(docs)} документов, {sum(len(d.nodes) for d in docs)} узлов ({CANONICAL_DIR})")
+    print(f"канон: {len(docs)} документов, {sum(len(d.nodes) for d in docs)} узлов"
+          + (f", архивных ревизий: {archived}" if archived else "")
+          + f" ({CANONICAL_DIR})")
     print(f"индекс: {'есть' if (INDEX_DIR / 'meta.json').exists() else 'нет'} ({INDEX_DIR})")
     return 0
 

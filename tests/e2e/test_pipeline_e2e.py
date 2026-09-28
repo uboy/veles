@@ -313,3 +313,84 @@ def test_index_roundtrip_rebuildable_from_canonical(mini_corpus, tmp_path) -> No
                     json={"query": IN_CORPUS_QUERY, "use_llm": False}).json()
     assert d["decision"] == "answer"
     assert d["citations"][0]["source_id"] == ORG_DOC_REL
+
+
+# ------------------------------------------------------- K3: версии документов
+
+POLICY_V1 = """\
+# Парольная политика
+
+Минимальная длина пароля составляет 8 символов.
+Пароль меняется каждые 180 дней.
+"""
+
+POLICY_V2 = """\
+# Парольная политика
+
+Минимальная длина пароля составляет 12 символов.
+Пароль меняется каждые 90 дней.
+"""
+
+POLICY_REL = "05_vyshka_academic/lectures/Модуль_1/Политики/парольная_политика.md"
+POLICY_QUERY = "какая минимальная длина пароля"
+
+
+@pytest.fixture()
+def revision_corpus(tmp_path, monkeypatch):
+    """Две ревизии одного документа: L0 v1 -> ingest (r1), L0 v2 -> ingest (r2,
+    старая в revision-r1/), затем честная сборка индекса по всем ревизиям."""
+    from veles.canonical.store import ingest_document
+
+    corpus_root = tmp_path / "corpus"
+    canonical = tmp_path / "canonical"
+    parser = TxtMdParserAdapter()
+    for text in (POLICY_V1, POLICY_V2):
+        path = corpus_root / POLICY_REL
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+        outcome = ingest_document(parser.parse_file(path, corpus_root=corpus_root),
+                                  root=canonical)
+        if text is POLICY_V1:
+            assert outcome.action == "created"
+        else:
+            assert outcome.action == "updated" and outcome.revision_id == "r2"
+    monkeypatch.setattr("veles.canonical.store.CANONICAL_DIR", canonical)
+    bundle = build_index(HashingEmbedder(), NumpyFlatStore(dim=HASH_DIM))
+    return bundle
+
+
+def test_ac6_stale_revision_filtered_in_favor_of_current(revision_corpus) -> None:
+    """AC6 (K3): устаревшая редакция не попадает в дефолтный ответ - поиск
+    возвращает только действующую, цитаты несут revision_id действующей."""
+    client = make_client(revision_corpus)
+    d = client.post("/v1/knowledge/query",
+                    json={"query": POLICY_QUERY, "use_llm": False}).json()
+    assert d["decision"] == "answer"
+    texts = [ev["text"] for ev in d["evidence"]]
+    assert any("12 символов" in t for t in texts), "действующая редакция в ответе"
+    assert all("8 символов" not in t for t in texts), "устаревшая редакция просочилась"
+    assert all(c["revision_id"] == "r2" for c in d["citations"])
+    assert "12 символов" in d["answer"]
+
+
+def test_revision_param_r1_all_and_unknown_via_http(revision_corpus) -> None:
+    """K3: revision=r1 возвращает архивную редакцию по явному запросу, all - обе,
+    неизвестная ревизия - 400 (негатив)."""
+    client = make_client(revision_corpus)
+
+    d_r1 = client.post("/v1/knowledge/query",
+                       json={"query": POLICY_QUERY, "use_llm": False,
+                             "revision": "r1"}).json()
+    texts_r1 = [ev["text"] for ev in d_r1["evidence"]]
+    assert texts_r1 and all("8 символов" in t for t in texts_r1)
+    assert all("12 символов" not in t for t in texts_r1)
+
+    d_all = client.post("/v1/knowledge/query",
+                        json={"query": POLICY_QUERY, "use_llm": False,
+                              "revision": "all"}).json()
+    texts_all = " ".join(ev["text"] for ev in d_all["evidence"])
+    assert "8 символов" in texts_all and "12 символов" in texts_all
+
+    r = client.post("/v1/knowledge/query",
+                    json={"query": POLICY_QUERY, "use_llm": False, "revision": "r7"})
+    assert r.status_code == 400
