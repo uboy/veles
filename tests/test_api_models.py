@@ -28,11 +28,32 @@ def test_models_respects_bearer_token() -> None:
     assert r.json()["data"][0]["id"] == "veles-knowledge"
 
 
+def _empty_retrieval_pipeline(llm):
+    """Пайплайн, где retrieval не находит ничего (честный abstain-путь)."""
+    from veles.indexing.indexer import IndexBundle
+    from test_api import FakeEmbedder
+
+    class EmptyVector:
+        def search(self, q, top_k=10):
+            return []
+
+    class EmptyBm25:
+        def search(self, q, top_k=10):
+            return []
+
+    bundle = IndexBundle(vector=EmptyVector(), bm25=EmptyBm25(), node_meta={
+        "n1": {"text": "Норма управляемости руководителя - от 5 до 9 пунктов.",
+               "access_groups": ["personal"], "title": "Пересказ",
+               "document_id": "lectures/x.txt", "heading_path": ["Менеджмент"],
+               "provenance": {"adapter": "txt-md:0.1", "source_id": "x.txt", "lines": [1, 1]}},
+    })
+    from veles.api.app import VelesPipeline
+    return VelesPipeline(bundle, FakeEmbedder(), llm=llm)
+
+
 def test_veles_assistant_fallback_on_abstain() -> None:
     """veles-assistant: вне корпуса -> общий ответ GLM с пометкой, без цитат."""
     from fastapi.testclient import TestClient
-
-    from test_api import make_pipeline
 
     class StubLLM:
         enabled = True
@@ -40,7 +61,7 @@ def test_veles_assistant_fallback_on_abstain() -> None:
         def answer_general(self, question: str) -> str:
             return f"Общий ответ на {question}"
 
-    app = create_app(pipeline=make_pipeline(llm=StubLLM()))
+    app = create_app(pipeline=_empty_retrieval_pipeline(StubLLM()))
     client = TestClient(app)
     r = client.post("/v1/chat/completions", json={
         "model": "veles-assistant",
@@ -58,12 +79,10 @@ def test_veles_knowledge_stays_pure_kb_on_abstain() -> None:
     """veles-knowledge: abstain БЕЗ fallback - база остаётся строгой."""
     from fastapi.testclient import TestClient
 
-    from test_api import make_pipeline
-
     class NoLLM:
         enabled = False
 
-    app = create_app(pipeline=make_pipeline(llm=NoLLM()))
+    app = create_app(pipeline=_empty_retrieval_pipeline(NoLLM()))
     client = TestClient(app)
     r = client.post("/v1/chat/completions", json={
         "model": "veles-knowledge",
