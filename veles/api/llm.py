@@ -71,6 +71,28 @@ class OpenAICompatibleProvider:
             "temperature": 0.2,
         }
         headers = {"Authorization": f"Bearer {self.config.api_key}"} if self.config.api_key else {}
+        return self._post_chat(payload)
+
+    def answer_general(self, question: str) -> str:
+        """Общий ответ без базы знаний (fallback модели veles-assistant)."""
+        if not self.enabled:
+            raise RuntimeError("LLM provider не настроен")
+        payload = {
+            "model": self.config.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Ты - полезный личный ассистент. Отвечай по делу, "
+                               "на русском языке, структурировано (markdown).",
+                },
+                {"role": "user", "content": question},
+            ],
+            "temperature": 0.3,
+        }
+        return self._post_chat(payload)
+
+    def _post_chat(self, payload: dict) -> str:
+        headers = {"Authorization": f"Bearer {self.config.api_key}"} if self.config.api_key else {}
         last_err: Optional[Exception] = None
         for attempt in range(2):
             try:
