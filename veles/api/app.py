@@ -5,12 +5,15 @@ POST /v1/chat/completions - совместимость для Open WebUI и др
 GET  /healthz
 
 Запуск: python -m veles serve [--host] [--port]
-Корпоративный контур (JWT/SSO) - Ф5; личный профиль - опциональный bearer-токен
-из окружения VELES_API_TOKEN.
+Личность запроса (K1): VELES_IDENTITY_MODE=static (дефолт, один владелец,
+bearer из VELES_API_TOKEN) | headers | jwt (корпоративный, личность из
+заголовков Open WebUI; bearer/token = служебный доступ владельца).
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import logging
 import os
 import re
@@ -21,7 +24,7 @@ from typing import Optional
 from urllib.parse import quote
 
 import pydantic
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 
 from ..config import INDEX_DIR, VELES_PUBLIC_URL, VELES_SOURCE_ROOTS
@@ -29,12 +32,25 @@ from ..indexing.embedder import SentenceTransformersProvider
 from ..indexing.indexer import IndexBundle, load_index
 from ..policy.answer import decide
 from ..policy.identifiers import extract_codex_refs, extract_identifiers
-from ..policy.identity import IdentityResolver, StaticOwnerResolver
+from ..policy.identity import (
+    IdentityResolver,
+    JwtHeaderResolver,
+    RequestIdentity,
+    StaticOwnerResolver,
+)
 from ..retrieval.retriever import hybrid_search
 from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
 
 EMBED_DIM = 384
 EMBED_MODEL = "intfloat/multilingual-e5-small"
+
+LINK_TTL_S = 24 * 3600  # срок подписанных ссылок (exp = now + TTL)
+
+
+def link_sig(secret: str, document_id: str, name_or_node: str, exp: int) -> str:
+    """hex HMAC-SHA256 от f"{document_id}|{name_or_node}|{exp}" (VELES_LINK_SECRET)."""
+    msg = f"{document_id}|{name_or_node}|{exp}"
+    return hmac.new(secret.encode("utf-8"), msg.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def asset_url(document_id: str, name: str, token: str) -> str:
@@ -47,6 +63,19 @@ def source_url(document_id: str, node_version_id: str, token: str) -> str:
     q = f"token={quote(token)}&node={quote(node_version_id)}" if token else (
         f"node={quote(node_version_id)}")
     return f"{VELES_PUBLIC_URL}/v1/source/{quote(document_id, safe=chr(47))}?{q}"
+
+
+def signed_asset_url(secret: str, document_id: str, name: str, exp: int) -> str:
+    sig = link_sig(secret, document_id, name, exp)
+    return (f"{VELES_PUBLIC_URL}/v1/asset/{quote(document_id, safe='/')}/{quote(name)}"
+            f"?exp={exp}&sig={sig}")
+
+
+def signed_source_url(secret: str, document_id: str, node_version_id: str, exp: int) -> str:
+    """Подписанная ссылка вместо token= в query: sig от document_id|node|exp."""
+    sig = link_sig(secret, document_id, node_version_id, exp)
+    return (f"{VELES_PUBLIC_URL}/v1/source/{quote(document_id, safe=chr(47))}"
+            f"?node={quote(node_version_id)}&exp={exp}&sig={sig}")
 
 
 class QueryRequest(pydantic.BaseModel):
@@ -134,7 +163,11 @@ class VelesPipeline:
         }
 
 
-def render_chat_content(result: dict, token: str = "") -> str:
+def render_chat_content(result: dict, token: str = "", link_secret: str = "") -> str:
+    """Ссылки в ответе: token= (static) или подписанные exp+sig (identity-режимы,
+    ссылка живёт LINK_TTL_S - браузер не передаёт заголовки личности)."""
+    signed = bool(link_secret)
+    exp = int(time.time()) + LINK_TTL_S if signed else 0
     if result["decision"] != "answer":
         reason = result["diagnostics"].get("reason") or ""
         return (
@@ -142,13 +175,24 @@ def render_chat_content(result: dict, token: str = "") -> str:
             + (f"\nПричина: {reason}." if reason else "")
             + "\nУточните вопрос, назовите конкретный документ или попросите добавить источник в базу."
         )
+
+    def _src_link(doc_id: str, node: str) -> str:
+        if signed:
+            return signed_source_url(link_secret, doc_id, node, exp)
+        return source_url(doc_id, node, token)
+
+    def _asset_link(doc_id: str, name: str) -> str:
+        if signed:
+            return signed_asset_url(link_secret, doc_id, name, exp)
+        return asset_url(doc_id, name, token)
+
     links = {
-        c["n"]: source_url(c["document_id"], c["node_version_id"], token)
+        c["n"]: _src_link(c["document_id"], c["node_version_id"])
         for c in result.get("citations", [])
         if c.get("document_id") and c.get("node_version_id")
     }
     images = [
-        asset_url(c["document_id"], c["asset"], token)
+        _asset_link(c["document_id"], c["asset"])
         for c in result.get("citations", [])
         if c.get("asset") and c.get("document_id")
     ]
@@ -179,11 +223,26 @@ def create_app(
     api_token: Optional[str] = None,
     resolver: Optional[IdentityResolver] = None,
 ) -> FastAPI:
+    token = api_token or os.environ.get("VELES_API_TOKEN", "")
+    mode = os.environ.get("VELES_IDENTITY_MODE", "static").strip().lower()
+    if resolver is not None:
+        # явный resolver = личный профиль (тесты/встраивание), заголовки не нужны
+        mode = "static"
+        identity_resolver: IdentityResolver = resolver
+    elif mode in ("headers", "jwt"):
+        identity_resolver = JwtHeaderResolver.from_env(mode)
+    else:
+        mode = "static"
+        identity_resolver = StaticOwnerResolver.from_env()
+
     state = {
         "pipeline": pipeline,
-        "token": api_token or os.environ.get("VELES_API_TOKEN", ""),
+        "token": token,
         # allowed_groups резолвит СЕРВЕР из личности (инвариант 5), не клиент
-        "resolver": resolver or StaticOwnerResolver.from_env(),
+        "resolver": identity_resolver,
+        "identity_mode": mode,
+        # секрет подписанных ссылок; пусто (и токена нет) - подпись не mint'ится
+        "link_secret": os.environ.get("VELES_LINK_SECRET", "") or token,
     }
 
     _pipeline_lock = __import__("threading").Lock()
@@ -221,13 +280,92 @@ def create_app(
         if token and authorization != f"Bearer {token}":
             raise HTTPException(status_code=401, detail="unauthorized")
 
-    @app.get("/v1/asset/{document_id:path}/{name}")
-    def asset_file(document_id: str, name: str, token: str = "",
-                   authorization: str = Header(default="")):
-        """Актив документа (картинка) - для показа в ответах веба и Telegram."""
+    def _owner_identity() -> RequestIdentity:
+        """Владелец/служебный клиент (bearer, token=, static-режим)."""
+        return RequestIdentity(user_id="", admin=True, groups=state["resolver"].allowed_groups())
+
+    def _header_identity(request: Request) -> Optional[RequestIdentity]:
+        """Корпоративный пользователь из заголовков; None - личности нет."""
+        if state["identity_mode"] == "static":
+            return None
+        ident = state["resolver"].resolve(request.headers)
+        if ident is not None and ident.user_id:
+            return ident
+        return None
+
+    def _token_owner(token: str, authorization: str) -> bool:
         state_token = state["token"]
-        if state_token and token != state_token and authorization != f"Bearer {state_token}":
-            raise HTTPException(status_code=401, detail="unauthorized")
+        return bool(state_token) and (
+            token == state_token or authorization == f"Bearer {state_token}"
+        )
+
+    def _identity(request: Request, authorization: str) -> RequestIdentity:
+        """Личность для API-эндпоинтов (query/chat/stats).
+
+        Identity-режимы: пользователь обязателен - из заголовков; bearer-токен
+        владельца = служебный доступ (Telegram-мост, CLI); без того и другого -
+        401. Static: владелец без условий (как раньше).
+        """
+        ident = _header_identity(request)
+        if ident is not None:
+            return ident
+        if state["identity_mode"] == "static":
+            # личный профиль: bearer обязателен при настроенном токене (как раньше)
+            state_token = state["token"]
+            if state_token and authorization != f"Bearer {state_token}":
+                raise HTTPException(status_code=401, detail="unauthorized")
+            return _owner_identity()
+        if _token_owner("", authorization):
+            return _owner_identity()
+        raise HTTPException(status_code=401, detail="identity required")
+
+    def _sig_ok(document_id: str, name_or_node: str, exp: str, sig: str) -> bool:
+        """Проверка подписанной ссылки: HMAC от document_id|name_or_node|exp."""
+        secret = state["link_secret"]
+        if not secret or not exp or not sig:
+            return False
+        try:
+            exp_i = int(exp)
+        except ValueError:
+            return False
+        if exp_i <= time.time():
+            return False
+        expected = link_sig(secret, document_id, name_or_node, exp_i)
+        return hmac.compare_digest(expected, sig)
+
+    def _link_identity(
+        request: Request, authorization: str, token: str,
+        document_id: str, name_or_node: str, exp: str, sig: str,
+    ) -> Optional[RequestIdentity]:
+        """Личность для эндпоинтов, открываемых браузером по ссылке.
+
+        Порядок: bearer/token= (владелец) -> подпись exp+sig (аноним,
+        доступ только к этому файлу) -> заголовки личности (identity-режимы).
+        None - не установлена; static без настроенного токена = открыто (как
+        раньше), identity-режим без всего - 401 у вызывающего.
+        """
+        if _token_owner(token, authorization):
+            return _owner_identity()
+        if _sig_ok(document_id, name_or_node, exp, sig):
+            return None
+        ident = _header_identity(request)
+        if ident is not None:
+            return ident
+        if state["identity_mode"] == "static" and not state["token"]:
+            return _owner_identity()
+        raise HTTPException(status_code=401, detail="unauthorized")
+
+    @app.get("/v1/asset/{document_id:path}/{name}")
+    def asset_file(
+        request: Request, document_id: str, name: str, token: str = "",
+        exp: str = "", sig: str = "", authorization: str = Header(default=""),
+    ):
+        """Актив документа (картинка) - для показа в ответах веба и Telegram.
+
+        Доступ: bearer/token= ИЛИ подписанная ссылка exp+sig
+        (sig от document_id|name|exp) ИЛИ заголовки личности (identity-режимы).
+        """
+        _link_identity(request, authorization, token, document_id, name, exp, sig)
         if not re.fullmatch(r"[\w.-]+", name):
             raise HTTPException(status_code=400, detail="bad asset name")
         from ..canonical.store import _doc_dir
@@ -244,17 +382,19 @@ def create_app(
 
     @app.get("/v1/source/{document_id:path}")
     def source_view(
+        request: Request,
         document_id: str,
         token: str = "",
         node: str = "",
+        exp: str = "",
+        sig: str = "",
         authorization: str = Header(default=""),
     ):
         """Источник в отдельной вкладке: оригинал (txt/md/pdf) из VELES_SOURCE_ROOTS,
-        иначе текстовая сборка из канона. Авторизация: bearer ИЛИ token=<...> в query
-        (ссылки из цитат не могут передавать заголовки)."""
-        state_token = state["token"]
-        if state_token and token != state_token and authorization != f"Bearer {state_token}":
-            raise HTTPException(status_code=401, detail="unauthorized")
+        иначе текстовая сборка из канона. Авторизация: bearer, token=<...> в query,
+        подписанная ссылка exp+sig (sig от document_id|node|exp) или заголовки
+        личности - ссылки из цитат не могут передавать заголовки."""
+        _link_identity(request, authorization, token, document_id, node, exp, sig)
 
         from ..canonical.store import _doc_dir
 
@@ -320,10 +460,10 @@ def create_app(
         return {"status": "ok", "ts": time.time()}
 
     @app.get("/v1/models")
-    def list_models(authorization: str = Header(default="")) -> dict:
+    def list_models(request: Request, authorization: str = Header(default="")) -> dict:
         """OpenAI-совместимый список моделей: Open WebUI и другие клиенты опрашивают
         /models у соединения; без него соединение выглядит пустым."""
-        _auth(authorization)
+        _identity(request, authorization)
         return {
             "object": "list",
             "data": [
@@ -345,13 +485,13 @@ def create_app(
         }
 
     @app.get("/v1/knowledge/stats")
-    def knowledge_stats(authorization: str = Header(default="")) -> dict:
+    def knowledge_stats(request: Request, authorization: str = Header(default="")) -> dict:
         """Оглавление базы: источники, верхнеуровневые разделы, объёмы.
 
         Питает команды /stats, /sources, /toc Telegram-моста и любые другие
         клиенты; строится из мета узлов загруженного индекса, без похода в L2.
         """
-        _auth(authorization)
+        _identity(request, authorization)
         p = _pipeline()
         docs: dict[str, dict] = {}
         for m in p.bundle.node_meta.values():
@@ -373,16 +513,20 @@ def create_app(
         }
 
     @app.post("/v1/knowledge/query")
-    def knowledge_query(req: QueryRequest, authorization: str = Header(default="")) -> dict:
-        _auth(authorization)
+    def knowledge_query(
+        req: QueryRequest, request: Request, authorization: str = Header(default="")
+    ) -> dict:
+        ident = _identity(request, authorization)
         return _pipeline().answer(
             req.query, req.top_k, req.use_llm,
-            allowed_groups=state["resolver"].allowed_groups(),
+            allowed_groups=ident.groups,
         )
 
     @app.post("/v1/chat/completions")
-    def chat_completions(req: ChatRequest, authorization: str = Header(default="")) -> JSONResponse:
-        _auth(authorization)
+    def chat_completions(
+        req: ChatRequest, request: Request, authorization: str = Header(default="")
+    ) -> JSONResponse:
+        ident = _identity(request, authorization)
         user_msgs = [m for m in req.messages if m.role == "user"]
         if not user_msgs:
             raise HTTPException(status_code=400, detail="нет сообщения пользователя")
@@ -392,11 +536,16 @@ def create_app(
         fallback = requested == "veles-assistant"
         result = _pipeline().answer(
             question, top_k=5, use_llm=True,
-            allowed_groups=state["resolver"].allowed_groups(),
+            allowed_groups=ident.groups,
         )
         llm = _pipeline().llm
+        link_secret = (
+            state["link_secret"] if state["identity_mode"] != "static" else ""
+        )
         if result["decision"] == "answer":
-            content = render_chat_content(result, token=state["token"])
+            content = render_chat_content(
+                result, token=state["token"], link_secret=link_secret
+            )
         elif fallback and llm and llm.enabled:
             try:
                 general = llm.answer_general(question)
@@ -429,19 +578,33 @@ def create_app(
         })
 
     @app.get("/tracker")
-    def tracker_page(token: str = "", chat: str = "", authorization: str = Header(default="")):
-        """Веб-просмотр персонального трекера (задачи + заметки) для чата.
-        Без параметра chat берётся единственный каталог пользователя."""
-        state_token = state["token"]
-        if state_token and token != state_token and authorization != f"Bearer {state_token}":
-            raise HTTPException(status_code=401, detail="unauthorized")
+    def tracker_page(
+        request: Request, token: str = "", chat: str = "",
+        authorization: str = Header(default=""),
+    ):
+        """Веб-просмотр персонального трекера (задачи + заметки).
+
+        Личность: bearer/token= (владелец) или заголовки (identity-режимы).
+        В identity-режимах пользователь видит ТОЛЬКО свой каталог
+        TRACKER_ROOT/<user_id>; параметр chat= - только админ."""
+        ident = _link_identity(request, authorization, token, "tracker", "", "", "")
+        if ident is None:
+            ident = _header_identity(request) or _owner_identity()
+        if state["identity_mode"] != "static" and not ident.admin and chat:
+            raise HTTPException(status_code=403, detail="chat= только для админа")
+        admin = ident.admin or state["identity_mode"] == "static"
         tracker_root = os.environ.get("TRACKER_ROOT", "")
         root = Path(tracker_root) if tracker_root else None
         if root is None or not root.exists():
             raise HTTPException(status_code=404, detail="трекер не настроен (TRACKER_ROOT)")
         candidates = [p.name for p in root.iterdir()
                       if p.is_dir() and not p.name.startswith(".")]
-        chat_id = chat or (candidates[0] if candidates else "")
+        if state["identity_mode"] != "static" and not admin:
+            chat_id = ident.user_id
+            if chat_id not in candidates:
+                chat_id = ""
+        else:
+            chat_id = chat or (candidates[0] if candidates else "")
 
         import sys as _sys
         import html as _html
@@ -497,7 +660,10 @@ def create_app(
         return HTMLResponse(NEWLINE.join(html))
 
     @app.get("/tracker/file/{kind}/{name}")
-    def tracker_file(kind: str, name: str, token: str = "", authorization: str = Header(default="")):
+    def tracker_file(
+        request: Request, kind: str, name: str, token: str = "",
+        authorization: str = Header(default=""),
+    ):
         state_token = state["token"]
         if state_token and token != state_token and authorization != f"Bearer {state_token}":
             raise HTTPException(status_code=401, detail="unauthorized")
@@ -507,7 +673,17 @@ def create_app(
         root = Path(tracker_root) if tracker_root else None
         if root is None:
             raise HTTPException(status_code=404, detail="трекер не настроен")
-        for user in root.iterdir():
+        users = [u for u in root.iterdir() if u.is_dir() and not u.name.startswith(".")]
+        if state["identity_mode"] != "static":
+            ident2 = _header_identity(request) or _owner_identity()
+            if not (ident2.admin or state["identity_mode"] == "static"):
+                mine = root / ident2.user_id / kind / name
+                if mine.exists():
+                    return PlainTextResponse(mine.read_text(encoding="utf-8"),
+                                             media_type="text/plain; charset=utf-8")
+                raise HTTPException(status_code=404, detail="не найдено")
+            users = users  # админ: поиск везде
+        for user in users:
             p = user / kind / name
             if p.exists():
                 return PlainTextResponse(p.read_text(encoding="utf-8"),
