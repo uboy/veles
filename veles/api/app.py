@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,7 +22,7 @@ from urllib.parse import quote
 
 import pydantic
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 
 from ..config import INDEX_DIR, VELES_PUBLIC_URL, VELES_SOURCE_ROOTS
 from ..indexing.embedder import SentenceTransformersProvider
@@ -380,5 +381,75 @@ def create_app(
                 "citations": result["citations"],
             },
         })
+
+    @app.get("/tracker")
+    def tracker_page(token: str = "", chat: str = "", authorization: str = Header(default="")):
+        """Веб-просмотр персонального трекера (задачи + заметки) для чата.
+        Без параметра chat берётся единственный каталог пользователя."""
+        state_token = state["token"]
+        if state_token and token != state_token and authorization != f"Bearer {state_token}":
+            raise HTTPException(status_code=401, detail="unauthorized")
+        tracker_root = os.environ.get("TRACKER_ROOT", "")
+        root = Path(tracker_root) if tracker_root else None
+        if root is None or not root.exists():
+            raise HTTPException(status_code=404, detail="трекер не настроен (TRACKER_ROOT)")
+        candidates = [p.name for p in root.iterdir()
+                      if p.is_dir() and not p.name.startswith(".")]
+        chat_id = chat or (candidates[0] if candidates else "")
+        if not chat_id:
+            raise HTTPException(status_code=404, detail="в трекере нет пользователей")
+
+        import sys as _sys
+        import html as _html
+        NEWLINE = chr(10)
+
+        bridge_dir = Path(__file__).resolve().parents[2] / "clients" / "telegram-bridge"
+        if str(bridge_dir) not in _sys.path:
+            _sys.path.insert(0, str(bridge_dir))
+        import tracker as tracker_mod
+
+        def _block(kind: str, title: str) -> list[str]:
+            items = tracker_mod.list_items(root, chat_id, kind, include_done=True)
+            out = [f"<h2>{title}</h2>"]
+            if not items:
+                out.append("<p><i>пусто</i></p>")
+            for i in items:
+                raw = f"/tracker/file/{kind}/{i['id']}.md?token={quote(token)}"
+                mark = "✅" if i["status"] == "done" else "⬜"
+                out.append(
+                    f"<p>{mark} <a href='{raw}'><b>{i['title']}</b></a> "
+                    f"<small>{i['id']} · {i['status']} · {i['created'][:16]}</small></p>"
+                )
+            return out
+
+        html = [
+            "<!doctype html><html><head><meta charset='utf-8'>",
+            "<meta name='viewport' content='width=device-width, initial-scale=1'>",
+            f"<title>Трекер - {chat_id}</title></head><body>",
+            f"<h1>Личный трекер ({chat_id})</h1>",
+            "<p><i>те же данные лежат markdown-файлами в TRACKER_ROOT - открываются в Obsidian</i></p>",
+            *_block("task", "Задачи"),
+            *_block("note", "Заметки"),
+            "</body></html>",
+        ]
+        return HTMLResponse(NEWLINE.join(html))
+
+    @app.get("/tracker/file/{kind}/{name}")
+    def tracker_file(kind: str, name: str, token: str = "", authorization: str = Header(default="")):
+        state_token = state["token"]
+        if state_token and token != state_token and authorization != f"Bearer {state_token}":
+            raise HTTPException(status_code=401, detail="unauthorized")
+        if kind not in ("task", "note") or not re.fullmatch(r"[\w.-]+\.md", name):
+            raise HTTPException(status_code=400, detail="bad path")
+        tracker_root = os.environ.get("TRACKER_ROOT", "")
+        root = Path(tracker_root) if tracker_root else None
+        if root is None:
+            raise HTTPException(status_code=404, detail="трекер не настроен")
+        for user in root.iterdir():
+            p = user / kind / name
+            if p.exists():
+                return PlainTextResponse(p.read_text(encoding="utf-8"),
+                                         media_type="text/plain; charset=utf-8")
+        raise HTTPException(status_code=404, detail="не найдено")
 
     return app
