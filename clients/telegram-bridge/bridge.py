@@ -400,6 +400,15 @@ def main() -> int:
     if not me.get("ok"):
         log.error("getMe failed: %s", str(me)[:200])
         return 1
+    # адрес чата для веб-страницы трекера: мост - источник истины, фасад читает файл
+    if TRACKER_ROOT:
+        try:
+            Path(TRACKER_ROOT).mkdir(parents=True, exist_ok=True)
+            (Path(TRACKER_ROOT) / "chat-url.txt").write_text(
+                f"https://t.me/{me['result'].get('username', '')}", encoding="utf-8"
+            )
+        except OSError:
+            log.warning("не смог записать chat-url.txt в TRACKER_ROOT")
     menu = tg("setMyCommands", commands=TG_COMMANDS)
     if not menu.get("ok"):
         log.warning("setMyCommands failed: %s", str(menu)[:150])

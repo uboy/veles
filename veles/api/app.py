@@ -396,8 +396,6 @@ def create_app(
         candidates = [p.name for p in root.iterdir()
                       if p.is_dir() and not p.name.startswith(".")]
         chat_id = chat or (candidates[0] if candidates else "")
-        if not chat_id:
-            raise HTTPException(status_code=404, detail="в трекере нет пользователей")
 
         import sys as _sys
         import html as _html
@@ -407,6 +405,14 @@ def create_app(
         if str(bridge_dir) not in _sys.path:
             _sys.path.insert(0, str(bridge_dir))
         import tracker as tracker_mod
+
+        chat_url_file = root / "chat-url.txt"
+        chat_url = chat_url_file.read_text(encoding="utf-8").strip()             if chat_url_file.exists() else ""
+
+        def _chat_link(r: Path, tok: str) -> list[str]:
+            if not chat_url:
+                return []
+            return [f"<p><a href='{chat_url}'>💬 Открыть чат в Telegram</a></p>"]
 
         def _block(kind: str, title: str) -> list[str]:
             items = tracker_mod.list_items(root, chat_id, kind, include_done=True)
@@ -428,8 +434,10 @@ def create_app(
             f"<title>Трекер - {chat_id}</title></head><body>",
             f"<h1>Личный трекер ({chat_id})</h1>",
             "<p><i>те же данные лежат markdown-файлами в TRACKER_ROOT - открываются в Obsidian</i></p>",
-            *_block("task", "Задачи"),
-            *_block("note", "Заметки"),
+            *_chat_link(root, token),
+            *(_block("task", "Задачи") + _block("note", "Заметки")
+              if chat_id else
+              ["<p><i>Пока нет данных. Отправьте боту /task текст - задача появится здесь.</i></p>"]),
             "</body></html>",
         ]
         return HTMLResponse(NEWLINE.join(html))
