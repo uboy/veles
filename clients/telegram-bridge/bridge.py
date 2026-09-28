@@ -353,9 +353,6 @@ def handle(update: dict, owner: int | None) -> int | None:
     voice_msg = msg.get("voice") or msg.get("audio")
     if not chat_id or (not text and not voice_msg):
         return owner
-    if voice_msg:
-        handle_voice(chat_id, voice_msg)
-        return owner
 
     if owner is None:
         if PAIR_MODE and text.startswith("/start"):
@@ -366,6 +363,12 @@ def handle(update: dict, owner: int | None) -> int | None:
         return owner
     if chat_id != owner:
         log.warning("drop message from non-owner chat %s", chat_id)
+        return owner
+
+    # голосовые только от владельца: иначе любой нашедший бота гоняет
+    # нашу транскрибацию, а длинный duration блокирует весь цикл getUpdates
+    if voice_msg:
+        handle_voice(chat_id, voice_msg)
         return owner
 
     if text in ("/start", "/help"):

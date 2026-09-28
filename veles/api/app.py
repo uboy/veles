@@ -331,7 +331,8 @@ def create_app(
         if exp_i <= time.time():
             return False
         expected = link_sig(secret, document_id, name_or_node, exp_i)
-        return hmac.compare_digest(expected, sig)
+        # encode: compare_digest на str требует ASCII, не-ASCII sig давал TypeError -> 500
+        return hmac.compare_digest(expected.encode(), sig.encode())
 
     def _link_identity(
         request: Request, authorization: str, token: str,
@@ -592,6 +593,10 @@ def create_app(
             ident = _header_identity(request) or _owner_identity()
         if state["identity_mode"] != "static" and not ident.admin and chat:
             raise HTTPException(status_code=403, detail="chat= только для админа")
+        # chat= попадает в путь TRACKER_ROOT/<chat>: только безопасные символы,
+        # '..' и ведущие точки исключены (иначе mkdir/чтение за пределами корня)
+        if chat and (not re.fullmatch(r"[\w@][\w.@-]*", chat) or ".." in chat):
+            raise HTTPException(status_code=400, detail="bad chat")
         admin = ident.admin or state["identity_mode"] == "static"
         tracker_root = os.environ.get("TRACKER_ROOT", "")
         root = Path(tracker_root) if tracker_root else None
@@ -629,12 +634,12 @@ def create_app(
             if not items:
                 out.append("<p><i>пусто</i></p>")
             for i in items:
-                raw = f"/tracker/file/{kind}/{i['id']}.md?token={quote(token)}"
+                raw = f"/tracker/file/{kind}/{quote(_html.escape(i['id'], True))}.md?token={quote(token)}"
                 mark = "✅" if i["status"] == "done" else "⬜"
                 due = f" ⏰ {i['due']}" if i.get("due") else ""
                 out.append(
-                    f"<p>{mark} <a href='{raw}'><b>{i['title']}</b></a>{due} "
-                    f"<small>{i['id']} · {i['status']} · {i['created'][:16]}</small></p>"
+                    f"<p>{mark} <a href='{raw}'><b>{_html.escape(i['title'], True)}</b></a>{due} "
+                    f"<small>{_html.escape(i['id'], True)} · {i['status']} · {i['created'][:16]}</small></p>"
                 )
             return out
 
@@ -647,9 +652,9 @@ def create_app(
         html = [
             "<!doctype html><html><head><meta charset='utf-8'>",
             "<meta name='viewport' content='width=device-width, initial-scale=1'>",
-            f"<title>Трекер - {chat_id}</title></head><body>",
+            f"<title>Трекер - {_html.escape(chat_id, True)}</title></head><body>",
             "<p>" + " · ".join(top_links) + "</p>" if top_links else "<p></p>",
-            f"<h1>Личный трекер</h1>" + (f" <small>{chat_id}</small>" if chat_id else ""),
+            f"<h1>Личный трекер</h1>" + (f" <small>{_html.escape(chat_id, True)}</small>" if chat_id else ""),
             "<p><i>те же данные лежат markdown-файлами в TRACKER_ROOT - открываются в Obsidian</i></p>",
             *_chat_link(root, token),
             *(_block("task", "Задачи") + _block("note", "Заметки")
@@ -664,25 +669,33 @@ def create_app(
         request: Request, kind: str, name: str, token: str = "",
         authorization: str = Header(default=""),
     ):
-        state_token = state["token"]
-        if state_token and token != state_token and authorization != f"Bearer {state_token}":
-            raise HTTPException(status_code=401, detail="unauthorized")
         if kind not in ("task", "note") or not re.fullmatch(r"[\w.-]+\.md", name):
             raise HTTPException(status_code=400, detail="bad path")
         tracker_root = os.environ.get("TRACKER_ROOT", "")
         root = Path(tracker_root) if tracker_root else None
         if root is None:
             raise HTTPException(status_code=404, detail="трекер не настроен")
-        users = [u for u in root.iterdir() if u.is_dir() and not u.name.startswith(".")]
         if state["identity_mode"] != "static":
-            ident2 = _header_identity(request) or _owner_identity()
-            if not (ident2.admin or state["identity_mode"] == "static"):
+            # identity-режим: владелец (bearer/token=) или личность из заголовков;
+            # без всего - 401, а НЕ владелец (анонимный доступ к чужим файлам = P0)
+            if _token_owner(token, authorization):
+                ident2 = _owner_identity()
+            else:
+                ident2 = _header_identity(request)
+            if ident2 is None:
+                raise HTTPException(status_code=401, detail="unauthorized")
+            if not ident2.admin:
                 mine = root / ident2.user_id / kind / name
                 if mine.exists():
                     return PlainTextResponse(mine.read_text(encoding="utf-8"),
                                              media_type="text/plain; charset=utf-8")
                 raise HTTPException(status_code=404, detail="не найдено")
-            users = users  # админ: поиск везде
+            # админ: поиск везде
+        else:
+            state_token = state["token"]
+            if state_token and token != state_token and authorization != f"Bearer {state_token}":
+                raise HTTPException(status_code=401, detail="unauthorized")
+        users = [u for u in root.iterdir() if u.is_dir() and not u.name.startswith(".")]
         for user in users:
             p = user / kind / name
             if p.exists():

@@ -39,8 +39,9 @@ HEADER_USER_EMAIL = "X-OpenWebUI-User-Email"
 HEADER_USER_ROLE = "X-OpenWebUI-User-Role"
 HEADER_USER_JWT = "X-OpenWebUI-User-Jwt"
 
-# user_id становится частью пути трекера: запрет обхода каталогов
-_UNSAFE_USER_ID = re.compile(r"[\\/]|^\.|\x00")
+# user_id становится частью пути трекера: запрет обхода каталогов и
+# drive-relative путей Windows ('c:'), '..' в любой позиции
+_UNSAFE_USER_ID = re.compile(r"[\\/:]|\.\.|^\.|\x00")
 
 
 def normalize_user_id(raw: str) -> str:

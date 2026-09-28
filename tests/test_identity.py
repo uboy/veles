@@ -146,3 +146,67 @@ def test_signed_source_link(tmp_path, monkeypatch) -> None:
                        hashlib.sha256).hexdigest()
     assert client.get("/v1/source/lectures/x.txt",
                       params={"node": "nv1", "exp": str(old), "sig": sig_old}).status_code == 401
+
+
+def test_tracker_file_anonymous_denied_in_identity_mode(monkeypatch, tmp_path) -> None:
+    """P0: в identity-режиме без заголовков и токена /tracker/file обязан отдавать 401,
+    а не права владельца (чтение файлов всех пользователей перебором каталогов)."""
+    (tmp_path / "petrov@corp.ru" / "task").mkdir(parents=True)
+    (tmp_path / "petrov@corp.ru" / "task" / "task-1-secret.md").write_text(
+        "секрет Петрова", encoding="utf-8"
+    )
+    monkeypatch.setenv("VELES_IDENTITY_MODE", "headers")
+    monkeypatch.setenv("TRACKER_ROOT", str(tmp_path))
+    client = TestClient(create_app(pipeline=None))  # VELES_API_TOKEN не задан
+    assert client.get("/tracker/file/task/task-1-secret.md").status_code == 401
+    assert client.get("/tracker").status_code == 401
+
+
+def test_non_ascii_sig_is_4xx_not_500(monkeypatch, tmp_path) -> None:
+    """P2: не-ASCII sig не должен ронять запрос TypeError'ом из compare_digest."""
+    import io as _io
+    import json as _json
+
+    canon = tmp_path / "data" / "canonical-test"
+    doc_dir = canon / "lectures_x.txt"
+    doc_dir.mkdir(parents=True)
+    (doc_dir / "manifest.json").write_text(_json.dumps(
+        {"title": "Т", "document_id": "lectures/x.txt", "revision_id": "r1",
+         "parser_profile": "txt-md:0.1", "access_groups": ["personal"],
+         "sha256": "a", "status": "current", "derived_from": []}), encoding="utf-8")
+    (doc_dir / "nodes.jsonl").write_text("", encoding="utf-8")
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    monkeypatch.setenv("VELES_LINK_SECRET", "link-secret")
+    client = TestClient(create_app(pipeline=None, api_token="tok"))
+    r = client.get("/v1/source/lectures/x.txt",
+                   params={"node": "nv", "exp": str(int(time.time()) + 600),
+                           "sig": "подпись"})
+    assert r.status_code == 401
+
+
+def test_chat_param_validated_and_xss_escaped(monkeypatch, tmp_path) -> None:
+    """P1/P2: chat= с обходом пути -> 400; title с HTML не исполняется на странице."""
+    (tmp_path / "boss@corp.ru" / "task").mkdir(parents=True)
+    (tmp_path / "victim" / "task").mkdir(parents=True)
+    (tmp_path / "victim" / "task" / "task-9.md").write_text(
+        "---\ntitle: 'Позвонить <img src=x onerror=alert(1)>'\nstatus: todo\n"
+        "created: 2026-09-28T10:00\ndue: null\n---\n\nтекст", encoding="utf-8")
+    monkeypatch.setenv("VELES_IDENTITY_MODE", "headers")
+    monkeypatch.setenv("TRACKER_ROOT", str(tmp_path))
+    monkeypatch.setenv("VELES_ADMIN_EMAILS", "boss@corp.ru")
+    client = TestClient(create_app(pipeline=None))
+    H = {"X-OpenWebUI-User-Email": "boss@corp.ru"}
+    r = client.get("/tracker", params={"chat": "../escaped-dir"}, headers=H)
+    assert r.status_code == 400
+    r2 = client.get("/tracker", params={"chat": "victim"}, headers=H)
+    assert r2.status_code == 200
+    assert "<img src=x onerror" not in r2.text
+    assert "&lt;img" in r2.text
+
+
+def test_unsafe_user_ids_rejected() -> None:
+    """P2: user_id с ':' (drive-relative Windows) и '..' отвергается."""
+    r = JwtHeaderResolver("headers")
+    assert r.resolve({"X-OpenWebUI-User-Email": "c:"}) is None
+    assert r.resolve({"X-OpenWebUI-User-Email": ".."}) is None
+    assert r.resolve({"X-OpenWebUI-User-Email": "a..b@corp.ru"}) is None
