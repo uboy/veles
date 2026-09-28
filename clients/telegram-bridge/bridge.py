@@ -221,7 +221,13 @@ def handle_voice(chat_id: int, voice_msg: dict) -> None:
             send(chat_id, "Задач в аудио не нашлось. Текст: " + text[:3000])
             return
         for t in tasks:
-            tracker.create_item(Path(TRACKER_ROOT), chat_id, "task", t, source="transcript")
+            try:
+                tracker.create_item(Path(TRACKER_ROOT), chat_id, "task", t,
+                                    source="transcript")
+            except tracker.LockTimeout as e:
+                # таймаут лока - до пользователя, а не молча в журнал
+                send(chat_id, str(e))
+                return
         send(chat_id, "Задачи из аудио: " + "; ".join(tasks))
         return
     for i, chunk in enumerate(split_for_telegram(text, limit=3400)):
@@ -436,12 +442,21 @@ def handle(update: dict, owner: int | None) -> int | None:
             if not tasks:
                 send(chat_id, "Задач в тексте не нашлось (или LLM недоступен).")
                 return owner
-            ids = [tracker.create_item(Path(TRACKER_ROOT), chat_id, "task", t,
-                                        source=source) for t in tasks]
+            try:
+                ids = [tracker.create_item(Path(TRACKER_ROOT), chat_id, "task", t,
+                                           source=source) for t in tasks]
+            except tracker.LockTimeout as e:
+                # таймаут лока - до пользователя, а не молча в журнал
+                send(chat_id, str(e))
+                return owner
             send(chat_id, "Извлечённые задачи:\n" +
                  "\n".join(f"• {t} ({i.split('-', 3)[-1]})" for t, i in zip(tasks, ids)))
             return owner
-        item_id = tracker.create_item(Path(TRACKER_ROOT), chat_id, kind, body)
+        try:
+            item_id = tracker.create_item(Path(TRACKER_ROOT), chat_id, kind, body)
+        except tracker.LockTimeout as e:
+            send(chat_id, str(e))
+            return owner
         send(chat_id, f"Создано: {item_id}")
         return owner
 
@@ -451,8 +466,12 @@ def handle(update: dict, owner: int | None) -> int | None:
             send(chat_id, "Трекер не настроен (TRACKER_ROOT).")
             return owner
         if text.startswith("/done "):
-            send(chat_id, tracker.set_status(Path(TRACKER_ROOT), chat_id, "task",
-                                             text[6:].strip(), "done"))
+            try:
+                send(chat_id, tracker.set_status(Path(TRACKER_ROOT), chat_id, "task",
+                                                 text[6:].strip(), "done"))
+            except tracker.LockTimeout as e:
+                # таймаут лока - до пользователя, а не молча в журнал
+                send(chat_id, str(e))
             return owner
         items = tracker.list_items(Path(TRACKER_ROOT), chat_id, kind)
         if not items:
@@ -498,7 +517,10 @@ def handle(update: dict, owner: int | None) -> int | None:
 
 def reminder_loop() -> None:
     """Напоминалки: задача с due сегодня/просроченная и не done -> сообщение
-    владельцу раз в сутки (метка reminded: <день> в файле)."""
+    владельцу раз в сутки. Текст читается reminder_due (снимок), метка
+    reminded: <день> ставится mark_reminded под локом с перечитыванием:
+    дописывается последней строкой файла, не в frontmatter; статус успели
+    сменить - метка не ставится."""
     if not TRACKER_ROOT:
         return
     root = Path(TRACKER_ROOT)
@@ -512,20 +534,17 @@ def reminder_loop() -> None:
                 if not tdir.exists():
                     continue
                 for p in tdir.glob("*.md"):
-                    text = p.read_text(encoding="utf-8")
-                    m = re.search(r"(?m)^due: (\d{4}-\d{2}-\d{2})$", text)
-                    if not m or m.group(1) > today or "status: done" in text:
+                    info = tracker.reminder_due(p, today)
+                    if info is None:
                         continue
-                    if f"reminded: {today}" in text:
-                        continue
-                    tm = re.search(r'(?m)^title: "?([^"\n]+?)"?$', text)
+                    due, title = info
                     try:
-                        send(int(user.name), f"⏰ Задача к сроку {m.group(1)}: "
-                             f"{tm.group(1) if tm else p.stem}")
+                        send(int(user.name), f"⏰ Задача к сроку {due}: {title}")
                     except Exception:  # noqa: BLE001 - чат мог отвалиться, не роняем цикл
                         log.exception("reminder send failed")
                         continue
-                    p.write_text(text + f"reminded: {today}\n", encoding="utf-8")
+                    if not tracker.mark_reminded(root, p, today):
+                        continue  # статус успели сменить - метку не ставим
         except Exception:  # noqa: BLE001
             log.exception("reminder loop failed")
         time.sleep(300)

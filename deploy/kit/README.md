@@ -26,6 +26,33 @@ cd veles-deploy-kit-<версия>/deploy/kit
 Corporate-only: `--identity-headers` - режим личности через plain-заголовки вместо
 дефолтного jwt (см. «Безопасность corporate»).
 
+### Lite: каталог трекера как рабочий каталог агента
+
+Каталог трекера (TRACKER_ROOT, по умолчанию `~/veles-tracker`) - обычный
+каталог markdown с git; он же может быть рабочим каталогом кодинг-агента.
+Скопируйте туда `templates/AGENTS.md` и подкаталог `templates/skills/`
+(в корне каталога трекера, без слова templates): ZCode, Claude Code, Codex
+подхватывают AGENTS.md и skills/*/SKILL.md автоматически, и агент получает
+правила работы с карточками (формат, статусы, «готово = проверено») и два
+скилла - `veles-ask` (вопрос к базе с цитатами) и `tracker-task` (завести
+задачу). Тот же приём, что в ai-tracker.
+
+### Бэкапы (corporate - обязательно)
+
+Каталог трекера TRACKER_ROOT (env `TRACKER_ROOT`, по умолчанию
+`~/veles-tracker`) - карточки задач и заметок всех пользователей, они
+существуют только там. Индекс базы пересобирается из корпуса, а вот трекер
+не восстанавливается ни из чего другого - corporate-админ обязан включить
+его в регулярный бэкап, например ночным cron (снимок каталога целиком
++ выкидывание копий старше 7 дней):
+
+```bash
+TRACKER_ROOT="${TRACKER_ROOT:-$HOME/veles-tracker}"
+tar czf "$HOME/veles-tracker-backup-$(date +%F).tar.gz" \
+    -C "$(dirname "$TRACKER_ROOT")" "$(basename "$TRACKER_ROOT")"
+find "$HOME" -maxdepth 1 -name 'veles-tracker-backup-*.tar.gz' -mtime +7 -delete
+```
+
 ## Требования к контуру (одна страница)
 
 **corporate**
@@ -149,6 +176,8 @@ deploy/kit/
   .env.example                                # все переменные с комментариями
   lib/common.sh                               # общие функции
   windows/install.ps1 windows/uninstall.ps1   # Windows-профиль
+  templates/AGENTS.md templates/skills/       # правила + скиллы (veles-ask, tracker-task)
+                                              # в каталог трекера - см. «Lite: каталог трекера…»
 ```
 
 Транскрипция голосовых (voxfusion-api) - внешний сервис, в кит не входит: поднимите
