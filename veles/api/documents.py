@@ -33,6 +33,7 @@ from ..ingest.queue import (
     upload_max_bytes,
     uploads_root,
     user_dir,
+    user_quota_lock,
 )
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
@@ -185,18 +186,20 @@ async def upload_document(
     directory = user_dir(ident.user_id)
     document_id = f"{directory}/{filename}"
     l0_path = uploads_root() / directory / filename
+
+    def _quota_and_write() -> None:
+        # P1+P2 ревью K4: check+write в тредпуле (синхронная запись не должна
+        # блокировать событийный цикл) и под per-user замком - атомарно для
+        # пользователя, два одновременных POST не превышают квоту
+        with user_quota_lock(directory):
+            check_quota(directory, len(raw), replacing=l0_path.exists())
+            l0_path.parent.mkdir(parents=True, exist_ok=True)
+            l0_path.write_bytes(raw)
+
     try:
-        check_quota(directory, len(raw), replacing=l0_path.exists())
+        await run_in_threadpool(_quota_and_write)
     except QuotaExceeded as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
-
-    def _write_l0() -> None:
-        # P1 ревью K4: запись в тредпул - синхронный write на событийном цикле
-        # блокировал бы все остальные запросы на время диска
-        l0_path.parent.mkdir(parents=True, exist_ok=True)
-        l0_path.write_bytes(raw)
-
-    await run_in_threadpool(_write_l0)
 
     job = queue.submit(
         user_id=ident.user_id,

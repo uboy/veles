@@ -23,7 +23,15 @@ from fastapi.testclient import TestClient
 from veles.api.app import VelesPipeline, create_app
 from veles.canonical.store import _doc_dir, save_document
 from veles.config import EMBED_DIM, EMBED_MODEL
-from veles.ingest.queue import IngestQueue, slugify_title, uploads_root, user_dir
+from veles.ingest.queue import (
+    IngestQueue,
+    QuotaExceeded,
+    check_quota,
+    slugify_title,
+    uploads_root,
+    user_dir,
+    user_quota_lock,
+)
 from veles.ingest.txt_md import TxtMdParserAdapter
 from veles.indexing.indexer import build_index, load_index
 from veles.indexing.vector_store import NumpyFlatStore
@@ -442,6 +450,39 @@ def test_upload_content_length_quota_remainder_413(kb_env, monkeypatch) -> None:
     assert "занято" in third.json()["detail"]
 
 
+def test_quota_check_and_write_atomic_per_user(kb_env, monkeypatch) -> None:
+    """P2 ревью K4 (TOCTOU): два одновременных потока выполняют check+write под
+    per-user замком - квота не превышается, второй получает отказ по документам
+    (без замка оба прошли бы проверку до записи)."""
+    import threading as _threading
+
+    monkeypatch.setenv("VELES_QUOTA_DOCS", "1")
+    monkeypatch.delenv("VELES_QUOTA_MB", raising=False)
+    barrier = _threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def worker(i: int) -> None:
+        barrier.wait(timeout=10)
+        directory = user_dir("")
+        try:
+            with user_quota_lock(directory):
+                l0 = uploads_root() / directory / f"f{i}.txt"
+                check_quota(directory, 10, replacing=l0.exists())
+                l0.parent.mkdir(parents=True, exist_ok=True)
+                l0.write_bytes(b"x" * 10)
+            outcomes.append("ok")
+        except QuotaExceeded:
+            outcomes.append("quota")
+
+    threads = [_threading.Thread(target=worker, args=(i,)) for i in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=10)
+    assert sorted(outcomes) == ["ok", "quota"]
+    assert len(list((uploads_root() / user_dir("")).glob("f*.txt"))) == 1
+
+
 # ------------------------------------------------- ревизии, no-op, перезапись
 
 
@@ -537,6 +578,29 @@ def test_queue_restart_marks_pending_job_failed(kb_env) -> None:
     assert q2.lookup(job.job_id)["status"] == "failed"  # персистентно, не вечный running
 
 
+def test_list_jobs_marks_stale_boot_failed(kb_env) -> None:
+    """P2 ревью K4: список джобов применяет ту же boot-id-семантику, что lookup, -
+    джоб чужого boot_id в queued показывается failed «сервис перезапущен»
+    (не вечный running) и персистентно фиксируется в журнале; свой живой
+    queued не трогается."""
+    pipeline = VelesPipeline(kb_env["bundle"], HashingEmbedder(), llm=None)
+    q1 = IngestQueue(pipeline_fn=lambda: pipeline, boot_id="boot-1", start_worker=False)
+    job = q1.submit(user_id="", filename=f"{DOC_SLUG}.md", title=DOC_TITLE,
+                    document_id=DOC_ID, size_bytes=10, groups=["personal"])
+    q2 = IngestQueue(pipeline_fn=lambda: pipeline, boot_id="boot-2", start_worker=False)
+    rec = next(r for r in q2.list_jobs() if r["job_id"] == job.job_id)
+    assert rec["status"] == "failed" and "перезапущен" in rec["error"]
+    # отказ персистентен: третье поколение очереди читает failed из журнала
+    q3 = IngestQueue(pipeline_fn=lambda: pipeline, boot_id="boot-3", start_worker=False)
+    assert q3.lookup(job.job_id)["status"] == "failed"
+    # живой queued своего boot_id остаётся queued
+    live = q1.submit(user_id="", filename="другой.md", title="Другой",
+                     document_id=f"{user_dir('')}/другой.md",
+                     size_bytes=5, groups=["personal"])
+    own = next(r for r in q1.list_jobs() if r["job_id"] == live.job_id)
+    assert own["status"] == "queued"
+
+
 def test_done_job_survives_facade_restart(kb_env) -> None:
     """Завершённый джоб после рестарта фасада остаётся done (чтение из журнала)."""
     client = make_static_client(kb_env["bundle"])
@@ -577,7 +641,8 @@ def test_format_negatives(kb_env) -> None:
 
 def test_pdf_job_fails_clean_without_docling(kb_env, monkeypatch) -> None:
     """PDF идёт через docling-конвейер: без docling в окружении джоб честно
-    failed с человеческой причиной (в стенд-venv docling есть - ветка не бьётся)."""
+    failed с человеческой причиной (в стенд-venv docling есть - ветка не бьётся).
+    P2 ревью K4: упавший разбор удаляет L0 - квота не съедается навсегда."""
     client = make_static_client(kb_env["bundle"])
     import builtins
 
@@ -595,3 +660,25 @@ def test_pdf_job_fails_clean_without_docling(kb_env, monkeypatch) -> None:
     job = wait_done(client, r.json()["job_id"])
     assert job["status"] == "failed" and "документ.pdf" in job["error"]
     assert upload_outcomes(kb_env["canonical"])[-1] == "failed"
+    assert not (uploads_root() / user_dir("") / "документ.pdf").exists()
+
+
+def test_discard_l0_warns_on_unlink_failure(kb_env, monkeypatch, caplog) -> None:
+    """P2 ревью K4: L0 не удалился (права/гонка fs) - только WARN в лог,
+    воркер не падает."""
+    import logging as _logging
+    from pathlib import Path as _Path
+
+    pipeline = VelesPipeline(kb_env["bundle"], HashingEmbedder(), llm=None)
+    queue = IngestQueue(pipeline_fn=lambda: pipeline, start_worker=False)
+    job = queue.submit(user_id="", filename="недоступный.txt", title="Т",
+                       document_id=f"{user_dir('')}/недоступный.txt",
+                       size_bytes=1, groups=["personal"])
+
+    def denied(self):
+        raise OSError("denied")
+
+    monkeypatch.setattr(_Path, "unlink", denied)
+    with caplog.at_level(_logging.WARNING, logger="veles.ingest.queue"):
+        queue._discard_l0(job)  # не бросает
+    assert any("не удалён" in r.message for r in caplog.records)

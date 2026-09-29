@@ -176,6 +176,23 @@ def quota_free_bytes(user_directory: str) -> int | None:
     return max(0, mb_limit * 1024 * 1024 - used) + largest
 
 
+_USER_QUOTA_LOCKS: dict[str, threading.Lock] = {}
+_USER_QUOTA_LOCKS_GUARD = threading.Lock()
+
+
+def user_quota_lock(user_directory: str) -> threading.Lock:
+    """Per-user замок квоты (P2 ревью K4, TOCTOU): check_quota + запись L0 под
+    одним замком - два одновременных POST одного пользователя не могут оба
+    пройти проверку до записи. Замки живут до конца процесса, по одному на
+    каталог пользователя."""
+    with _USER_QUOTA_LOCKS_GUARD:
+        lock = _USER_QUOTA_LOCKS.get(user_directory)
+        if lock is None:
+            lock = threading.Lock()
+            _USER_QUOTA_LOCKS[user_directory] = lock
+        return lock
+
+
 def safe_filename(name: str) -> str | None:
     """Валидация имени файла загрузки: плоское имя без обхода каталогов."""
     name = (name or "").strip()
@@ -386,13 +403,24 @@ class IngestQueue:
         return record
 
     def list_jobs(self, limit: int = 200) -> list[dict]:
-        """Все известные джобы (свежие первыми): память поверх журнала."""
+        """Все известные джобы (свежие первыми): память поверх журнала.
+        Недошедшие джобы чужого boot_id - та же семантика, что и в lookup
+        (P2 ревью K4): failed «сервис перезапущен», иначе в списке висит
+        вечный running."""
         merged: dict[str, dict] = {}
         for job in self._jobs.values():
             merged[job.job_id] = job.to_dict()
         for record in self._ledger_records():
             merged.setdefault(record["job_id"], record)
-        records = sorted(merged.values(), key=lambda r: r.get("created_at", ""), reverse=True)
+        records = []
+        for record in merged.values():
+            if record.get("status") in ("queued", "running") and record.get("boot_id") != self.boot_id:
+                record["status"] = "failed"
+                record["error"] = "сервис перезапущен, задание не завершилось - повторите загрузку"
+                record["finished_at"] = _now_iso()
+                self._append_ledger(Job.from_dict(record))  # персистентно, как в lookup
+            records.append(record)
+        records.sort(key=lambda r: r.get("created_at", ""), reverse=True)
         return records[:limit]
 
     # ------------------------------------------------------------------ журнал
@@ -478,6 +506,16 @@ class IngestQueue:
             doc = TxtMdParserAdapter().parse_file(path, corpus_root=uploads_root())
         return doc
 
+    def _discard_l0(self, job: Job) -> None:
+        """P2 ревью K4: упавший разбор не должен навсегда съедать квоту -
+        L0-файл удаляется; не удалось удалить - громко в лог (WARN)."""
+        path = uploads_root() / user_dir(job.user_id) / job.filename
+        try:
+            path.unlink()
+        except OSError as e:  # noqa: BLE001 - неудача удаления не ломает воркер
+            logger.warning("L0 %s не удалён после провала джоба %s: %s",
+                           path, job.job_id, e)
+
     def _process(self, job: Job) -> None:
         """parse -> canonical (K3) -> апсерт живого индекса -> overlay -> аудит."""
         from .. import config
@@ -494,6 +532,7 @@ class IngestQueue:
             doc = self._parse(job)
         except Exception as e:  # noqa: BLE001 - битый файл: человеческая причина
             job.error = f"не удалось разобрать документ ({job.filename}): {e}"[:500]
+            self._discard_l0(job)  # битый файл не съедает квоту навсегда
             return
 
         job.sha256 = doc.sha256
