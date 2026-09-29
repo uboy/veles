@@ -1,4 +1,4 @@
-"""CLI veles: scan-corpus | ingest | index | ask | status.
+"""CLI veles: scan-corpus | ingest | index | ask | add | delete | status.
 
 Запуск: python -m veles <command> ...
 """
@@ -147,6 +147,75 @@ def cmd_ask(args: argparse.Namespace) -> int:
     return 0
 
 
+def build_embedder():
+    """Фабрика эмбеддера для ask/add (отдельная функция - тесты подменяют стабом)."""
+    return SentenceTransformersProvider(EMBED_MODEL, dim=EMBED_DIM)
+
+
+def cmd_add(args: argparse.Namespace) -> int:
+    """Добавить один txt/md-файл в базу без пересборки индекса (K15, демо в lite).
+
+    Тот же конвейер, что у загрузки через фасад (K4): parse -> canonical
+    (ревизии K3) -> инкрементальный апсерт живого бандла + overlay (документ
+    ищется сразу и переживает рестарт без пересборки). L0 кладётся в
+    uploads/owner/<имя> - та же физика, что у фасада, поэтому `veles delete`
+    снимает такой документ целиком. Синхронно: вернулся - можно спрашивать.
+    """
+    import os
+    import shutil
+
+    from . import config
+    from .indexing.overlay import append_overlay
+    from .ingest.queue import safe_filename, uploads_root, upsert_document, user_dir
+
+    src = Path(args.file).expanduser()
+    if not src.is_file():
+        print(f"файл не найден: {src}")
+        return 1
+    if src.suffix.lower() not in (".txt", ".md"):
+        print("поддерживаются форматы txt и md (pdf - через фасад: POST /v1/documents)")
+        return 1
+    if not (config.INDEX_DIR / "meta.json").exists():
+        print("индекс не собран - сначала `veles index` (или install.sh --demo)")
+        return 1
+
+    directory = user_dir("")  # static-режим: владелец, как у фасада
+    filename = safe_filename(src.name)
+    if filename is None:
+        print(f"недопустимое имя файла: {src.name}")
+        return 1
+    l0_dir = uploads_root() / directory
+    l0_dir.mkdir(parents=True, exist_ok=True)
+    l0_path = l0_dir / filename
+    shutil.copyfile(src, l0_path)
+
+    try:
+        # corpus_root = корень uploads: document_id = "owner/<имя>", как у фасада
+        doc = TxtMdParserAdapter().parse_file(l0_path, corpus_root=uploads_root())
+    except Exception as e:  # noqa: BLE001 - битый файл: человеческая причина
+        print(f"не удалось разобрать документ: {e}")
+        return 1
+    if args.title:
+        doc.title = args.title
+    by = args.by or os.environ.get("VELES_INGESTED_BY", "").strip() or "cli"
+    outcome = ingest_document(doc, by=by)
+    if outcome.action == "unchanged":
+        print(f"{doc.document_id}: без изменений (такая версия уже в базе)")
+        return 0
+
+    bundle = load_index(config.INDEX_DIR)
+    delta = upsert_document(bundle, doc, outcome, build_embedder())
+    if delta is not None:
+        append_overlay(
+            config.INDEX_DIR, delta.nodes, delta.patches,
+            delta.ids, delta.matrix, delta.bm25,
+        )
+    print(f"{doc.document_id}: {len(doc.nodes)} узлов "
+          f"({outcome.action}, {outcome.revision_id}) - документ в поиске")
+    print('проверка: veles ask "<вопрос по документу>"')
+    return 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     docs = list(iter_documents())
     all_revs = list(iter_documents(include_revisions=True))
@@ -257,6 +326,12 @@ def main() -> int:
     p.add_argument("query")
     p.add_argument("--top-k", type=int, default=8)
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("add", help="добавить txt/md-файл в базу без пересборки индекса")
+    p.add_argument("file", help="путь к файлу (.txt или .md)")
+    p.add_argument("--title", default="", help="название документа (по умолчанию - имя файла)")
+    p.add_argument("--by", default="", help="кто добавляет (логин/почта); иначе env VELES_INGESTED_BY")
+    p.set_defaults(func=cmd_add)
 
     sub.add_parser("status", help="состояние корпуса/канона/индекса").set_defaults(func=cmd_status)
 
