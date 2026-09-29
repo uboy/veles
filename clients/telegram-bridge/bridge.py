@@ -28,6 +28,7 @@ from pathlib import Path
 import httpx
 
 import voice
+import documents
 from tg_format import format_markdown_to_html, split_for_telegram, strip_html_tags
 import tracker
 
@@ -36,6 +37,9 @@ TRACKER_ROOT = os.environ.get("TRACKER_ROOT", "")
 VOXFUSION_API_URL = os.environ.get("VOXFUSION_API_URL", "http://127.0.0.1:8500")
 VOXFUSION_API_TOKEN = os.environ.get("VOXFUSION_API_TOKEN", "")
 VOICE_PENDING: set[int] = set()  # чаты, чьё следующее голосовое идёт в задачи (/vt)
+DOC_POLL_INTERVAL_S = float(os.environ.get("BRIDGE_DOC_POLL_S", "10"))
+DOC_WATCH_TIMEOUT_S = float(os.environ.get("BRIDGE_DOC_WATCH_TIMEOUT_S", "900"))
+DOC_MAX_CONCURRENT = int(os.environ.get("BRIDGE_DOC_MAX_CONCURRENT", "5"))
 TG_API = f"https://api.telegram.org/bot{TG_TOKEN}"
 WEBUI_BASE = os.environ.get("OPENWEBUI_BASE_URL", "http://127.0.0.1:8300").rstrip("/")
 WEBUI_KEY = os.environ.get("OPENWEBUI_API_KEY", "")
@@ -62,6 +66,12 @@ SOURCE_FOOTER = os.environ.get(
 )
 PAIR_MODE = os.environ.get("PAIR_MODE", "1") == "1"
 STATE_FILE = Path(os.environ.get("BRIDGE_STATE_FILE", "bridge-state.json"))
+# K9: группы загрузок документов (/docgroup) - state рядом с pairing-state;
+# пустая BRIDGE_DOC_STATE_FILE -> дефолт <stem>-docgroups.json рядом
+DOC_STATE_FILE = Path(
+    os.environ.get("BRIDGE_DOC_STATE_FILE", "")
+    or str(STATE_FILE.with_name(STATE_FILE.stem + "-docgroups.json"))
+)
 HISTORY_LIMIT = int(os.environ.get("BRIDGE_HISTORY", "16"))
 if HISTORY_LIMIT <= 0:
     # hist[-0:] в python - ВЕСЬ список; 0 или меньше означало бы обратное желаемому
@@ -102,10 +112,11 @@ HELP_TEXT = (
     "/tasks - открытые задачи; /done часть-id - закрыть\n"
     "/note текст - заметка; /notes - последние заметки\n"
     "/vt - следующее голосовое будет разобрано на задачи\n"
-    "Обычное сообщение - вопрос к базе знаний."
+    "/docgroup - группа для загрузок файлов: без аргумента текущая и список\n"
+    "Файл (txt/md/pdf, до 20 МБ) - загрузка в базу знаний."
 )
 KNOWN_COMMANDS = {"/start", "/new", "/help", "/kb", "/stats", "/sources", "/toc",
-                  "/task", "/tasks", "/done", "/note", "/notes"}
+                  "/task", "/tasks", "/done", "/note", "/notes", "/docgroup"}
 TG_COMMANDS = [
     {"command": "new", "description": "Сброс контекста диалога"},
     {"command": "help", "description": "Справка по командам"},
@@ -119,6 +130,7 @@ TG_COMMANDS = [
     {"command": "note", "description": "Заметка: /note текст"},
     {"command": "notes", "description": "Последние заметки"},
     {"command": "vt", "description": "Следующее голосовое -> задачи"},
+    {"command": "docgroup", "description": "Группа загрузок файлов: /docgroup <id>"},
 ]
 
 
@@ -164,6 +176,20 @@ def _tg_send(chat_id: int, text: str, parse_html: bool) -> dict | None:
             continue
         return sent
     return None
+
+
+def send_html(chat_id: int, html_text: str) -> None:
+    """Статусные сообщения документо-потока (K9): текст УЖЕ Telegram-HTML,
+    экранирование имён/ошибок - на вызывающем (documents.esc). ok=false ->
+    plain fallback куска (как в send), без markdown-конвертации - она коверкала
+    бы имена файлов с _/#/*."""
+    sent = _tg_send(chat_id, html_text, parse_html=True)
+    if sent is None or not sent.get("ok"):
+        log.warning(
+            "HTML send failed (%s), fallback to plain",
+            str((sent or {}).get("description"))[:120],
+        )
+        _tg_send(chat_id, strip_html_tags(html_text), parse_html=False)
 
 
 def apply_footer(answer_html: str, model: str) -> str:
@@ -232,6 +258,192 @@ def handle_voice(chat_id: int, voice_msg: dict) -> None:
         return
     for i, chunk in enumerate(split_for_telegram(text, limit=3400)):
         send(chat_id, ("Транскрипция: " + chunk) if i == 0 else chunk)
+
+
+# --- Документы в базу знаний (K9): файл -> фасад -> статусные сообщения ---
+
+_DOC_SLOT_LOCK = threading.Lock()
+_doc_slots = 0  # одновременные ожидания завершения загрузки (doc_watch_loop)
+
+
+def reserve_doc_slot() -> bool:
+    """Занять слот ожидания; DOC_MAX_CONCURRENT исчерпан - отказ (чтобы
+    очередь джобов не росла неограниченно, завершения всё равно никто
+    не дождётся)."""
+    global _doc_slots
+    with _DOC_SLOT_LOCK:
+        if _doc_slots >= DOC_MAX_CONCURRENT:
+            return False
+        _doc_slots += 1
+        return True
+
+
+def release_doc_slot() -> None:
+    global _doc_slots
+    with _DOC_SLOT_LOCK:
+        _doc_slots = max(0, _doc_slots - 1)
+
+
+def load_doc_group(chat_id: int) -> str:
+    """Группа загрузок этого чата (/docgroup); не выбрана - пусто, фасад
+    возьмёт дефолт (личная user:<uid>)."""
+    data = documents.load_doc_state(DOC_STATE_FILE)
+    entry = data.get(str(chat_id))
+    if not isinstance(entry, dict):
+        return ""
+    return str(entry.get("doc_group", "") or "")
+
+
+def save_doc_group(chat_id: int, group: str) -> None:
+    data = documents.load_doc_state(DOC_STATE_FILE)
+    data[str(chat_id)] = {"doc_group": group}
+    documents.save_doc_state(DOC_STATE_FILE, data)
+
+
+def _fmt_doc_groups(groups: object) -> str:
+    """Группы документа для завершающего сообщения: служебные user:* -
+    «личная группа», остальное - перечисление id."""
+    ids = [str(g) for g in (groups or []) if str(g)]
+    if not ids:
+        return "-"
+    if all(g.startswith("user:") for g in ids):
+        return "личная группа"
+    return ", ".join(ids)
+
+
+def handle_document(chat_id: int, doc_msg: dict) -> None:
+    """Document-message -> getFile/скачивание -> POST /v1/documents ->
+    «принял» сразу, завершение - вторым сообщением из doc_watch_loop.
+    Вызывается только для владельца (гейт в handle, до любых сетевых действий)."""
+    fname = str(doc_msg.get("file_name") or "")
+    ext = "." + fname.rsplit(".", 1)[-1].lower() if "." in fname else ""
+    if ext not in documents.DOC_EXTENSIONS:
+        send_html(chat_id, f"❌ Формат {documents.esc(ext or 'без расширения')} не "
+                           "поддерживаю. Пришлите файл txt, md или pdf.")
+        return
+    size = int(doc_msg.get("file_size") or 0)
+    if size > documents.TG_GETFILE_MAX_BYTES:
+        # лимит Telegram Bot API: больше 20 МБ getFile боту не отдаёт
+        send_html(chat_id, f"❌ Файл {documents.esc(fname)} "
+                           f"({documents.fmt_file_size(size)}) больше лимита Telegram "
+                           "20 МБ на скачивание ботом. Пришлите файл меньшего размера "
+                           "или загрузите через API (deploy/kit/README.md).")
+        return
+    if not reserve_doc_slot():
+        send_html(chat_id, f"❌ Уже {DOC_MAX_CONCURRENT} одновременных загрузок - "
+                           f"дождитесь завершения и пришлите {documents.esc(fname)} снова.")
+        return
+    send_html(chat_id, f"📄 Принял <b>{documents.esc(fname)}</b>, загружаю...")
+    tmpdir = Path(tempfile.mkdtemp(prefix="veles-doc-"))
+    submitted = False
+    try:
+        try:
+            path = voice.download_tg_voice(tg_client, doc_msg["file_id"], tmpdir)
+        except Exception as e:  # noqa: BLE001
+            log.exception("document download failed")
+            send_html(chat_id, f"❌ Не смог скачать файл из Telegram: "
+                               f"{documents.esc(type(e).__name__)}")
+            return
+        try:
+            # имя в multipart - как файл лежит у Telegram; title - из имени
+            # сообщения (Telegram-имена вида file_42.pdf хуже читаются)
+            job_id = documents.submit_document(
+                veles_client, path,
+                title=Path(fname).stem if fname else "",
+                group=load_doc_group(chat_id),
+            )
+        except documents.FacadeError as e:
+            # отказ фасада (формат, квота, группа без права) - текст detail как есть
+            log.warning("document submit rejected: %s", str(e)[:200])
+            send_html(chat_id, f"❌ Фасад отклонил загрузку: {documents.esc(str(e))}")
+            return
+        except Exception as e:  # noqa: BLE001
+            log.exception("document submit failed")
+            send_html(chat_id, f"❌ Сервис загрузки недоступен: "
+                               f"{documents.esc(type(e).__name__)}")
+            return
+        threading.Thread(
+            target=doc_watch_loop, args=(job_id, chat_id, fname), daemon=True
+        ).start()
+        submitted = True  # слот отдаём под управление doc_watch_loop (release в finally)
+    finally:
+        import shutil
+
+        shutil.rmtree(tmpdir, ignore_errors=True)  # L0 у фасада, локальная копия не нужна
+        if not submitted:
+            release_doc_slot()
+
+
+def doc_watch_loop(job_id: str, chat_id: int, fname: str) -> None:
+    """Фон-поток завершения загрузки (паттерн reminder_loop): поллинг статуса
+    джоба и второе сообщение пользователю. Транспортные сбои опроса -
+    продолжаем до дедлайна; потеря джоба фасадом (рестарт, 404) - честный отказ."""
+    try:
+        deadline = time.monotonic() + DOC_WATCH_TIMEOUT_S
+        record: dict | None = None
+        while True:
+            try:
+                record = documents.get_job(veles_client, job_id)
+                if record.get("status") in ("done", "failed"):
+                    break
+                record = None
+            except documents.FacadeError as e:
+                send_html(chat_id, f"❌ Не удалось: {documents.esc(fname)} - "
+                                   f"{documents.esc(str(e))}")
+                return
+            except Exception:  # noqa: BLE001 - фасад мог перезапускаться, ждём дальше
+                log.exception("doc job status failed")
+                record = None
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(DOC_POLL_INTERVAL_S)
+        if record is None or record.get("status") not in ("done", "failed"):
+            send_html(chat_id, f"⏳ {documents.esc(fname)} всё ещё обрабатывается "
+                               f"(лимит ожидания моста {int(DOC_WATCH_TIMEOUT_S)} с) - "
+                               "проверьте позже: /sources")
+            return
+        if record.get("status") == "failed":
+            send_html(chat_id, f"❌ Не удалось: {documents.esc(fname)} - "
+                               f"{documents.esc(record.get('error') or 'без причины')}")
+            return
+        title = str(record.get("title") or fname)
+        send_html(chat_id, f"✅ Загружено: <b>{documents.esc(title)}</b> "
+                           f"({documents.esc(_fmt_doc_groups(record.get('groups')))})")
+    finally:
+        release_doc_slot()
+
+
+def handle_docgroup(chat_id: int, arg: str) -> None:
+    """Группа загрузок этого чата. /docgroup - текущая + список фасада;
+    /docgroup <id> - выбор (валидность сверяется с GET /v1/groups, чтобы
+    опечатку видеть сразу, а не при следующей загрузке). Отказы фасада -
+    текстом detail как есть (право на группу фасад проверяет сам)."""
+    try:
+        groups = documents.list_groups(veles_client)
+    except documents.FacadeError as e:
+        send_html(chat_id, f"❌ Фасад: {documents.esc(str(e))}")
+        return
+    except Exception as e:  # noqa: BLE001
+        log.exception("groups list failed")
+        send_html(chat_id, f"❌ База знаний недоступна ({documents.esc(type(e).__name__)}).")
+        return
+    if not arg:
+        current = load_doc_group(chat_id)
+        lines = [f"Группа загрузок этого чата: "
+                 f"{current or 'не выбрана (личная user:...)'}", "",
+                 "Выбор: /docgroup <id>. Группы:"]
+        lines += [f"- {g['id']} - {g['title']}" for g in groups]
+        send_html(chat_id, "\n".join(lines))
+        return
+    gid = arg.split()[0]
+    if not any(g.get("id") == gid for g in groups):
+        known = ", ".join(str(g.get("id")) for g in groups)
+        send_html(chat_id, f"❌ Группы {documents.esc(gid)} нет в списке фасада. "
+                           f"Доступные: {documents.esc(known)}")
+        return
+    save_doc_group(chat_id, gid)
+    send_html(chat_id, f"📄 Группа загрузок этого чата: <b>{documents.esc(gid)}</b>. "
+                       "Следующие файлы уйдут в неё.")
 
 
 IMG_RE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")
@@ -355,7 +567,8 @@ def handle(update: dict, owner: int | None) -> int | None:
     chat_id = (msg.get("chat") or {}).get("id")
     text = (msg.get("text") or "").strip()[:MAX_MESSAGE_CHARS]
     voice_msg = msg.get("voice") or msg.get("audio")
-    if not chat_id or (not text and not voice_msg):
+    doc_msg = msg.get("document")
+    if not chat_id or (not text and not voice_msg and not doc_msg):
         return owner
 
     if owner is None:
@@ -373,6 +586,16 @@ def handle(update: dict, owner: int | None) -> int | None:
     # нашу транскрибацию, а длинный duration блокирует весь цикл getUpdates
     if voice_msg:
         handle_voice(chat_id, voice_msg)
+        return owner
+
+    # документы тоже только от владельца (гейт до любого сетевого действия):
+    # чужой файл не должен скачиваться и занимать очередь загрузки фасада
+    if doc_msg:
+        handle_document(chat_id, doc_msg)
+        return owner
+
+    if text == "/docgroup" or text.startswith("/docgroup "):
+        handle_docgroup(chat_id, text[len("/docgroup"):].strip())
         return owner
 
     if text in ("/start", "/help"):
