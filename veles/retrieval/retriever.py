@@ -62,6 +62,24 @@ def is_junk_node(text: str) -> bool:
     return any(rx.search(low) for rx in _JUNK_RES)
 
 
+def dedupe_pairs(pairs: list[tuple[str, float]]) -> list[tuple[str, float]]:
+    """Снятие дубликатов узла внутри канала (первое вхождение = лучший скор).
+
+    Прод-индекс 29.09: 241 430 записей stores на 158 394 узлов - 83 036 узлов
+    записаны в vector/bm25 дважды (артефакт snapshot+overlay загрузки). Без
+    снятия дубль узла получает ДВА вклада RRF одного канала и вытесняет узлы
+    другого канала (кейс k11-056: BM25-дубли шапки НК РФ/ГК РФ съели top-5,
+    хотя dense ставил ответные узлы гл. 28 на ранги 1-6)."""
+    seen: set[str] = set()
+    out: list[tuple[str, float]] = []
+    for nid, score in pairs:
+        if nid in seen:
+            continue
+        seen.add(nid)
+        out.append((nid, score))
+    return out
+
+
 def hybrid_search(
     bundle: IndexBundle,
     query_vec,
@@ -74,6 +92,7 @@ def hybrid_search(
     candidate_depth: int | None = None,
     codex_boost: float | None = None,
     filter_junk: bool | None = None,
+    dedupe_channels: bool | None = None,
 ) -> list[Evidence]:
     """Pre-retrieval authorization (инвариант 5) + ревизионный фильтр (K3) - один шов:
     узлы без пересечения групп с allowed_groups отсекаются до формирования evidence
@@ -86,7 +105,9 @@ def hybrid_search(
     candidate_depth - глубина каналов до RRF (дефолт top_k*5); codex_boost -
     бонус узлам документа, явно упомянутого в вопросе («согласно НК РФ»),
     в единицах вклада ранга 1 одного канала (bonus = codex_boost/(rrf_k+1));
-    filter_junk - отсекать мусорные пустышки из выдачи (is_junk_node)."""
+    filter_junk - отсекать мусорные пустышки из выдачи (is_junk_node);
+    dedupe_channels - снимать дубликаты узла внутри канала (прод-индекс
+    содержит 52% узлов дважды; см. dedupe_pairs)."""
     from ..config import DEFAULT_ACCESS_GROUPS
 
     if rrf_k is None:
@@ -101,6 +122,10 @@ def hybrid_search(
         from ..config import FILTER_JUNK_NODES
 
         filter_junk = FILTER_JUNK_NODES
+    if dedupe_channels is None:
+        from ..config import DEDUPE_CHANNELS
+
+        dedupe_channels = DEDUPE_CHANNELS
 
     groups = allowed_groups or DEFAULT_ACCESS_GROUPS
 
@@ -130,6 +155,9 @@ def hybrid_search(
     lex = [
         (nid, s) for nid, s in bundle.bm25.search(query_text, top_k=depth) if authorized(nid)
     ]
+    if dedupe_channels:
+        dense = dedupe_pairs(dense)
+        lex = dedupe_pairs(lex)
 
     rrf: dict[str, float] = {}
     ranks: dict[str, dict] = {}

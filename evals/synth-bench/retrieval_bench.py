@@ -157,6 +157,7 @@ def run_live(golden: list[dict], args) -> dict[str, list[dict]]:
             candidate_depth=args.depth,
             codex_boost=args.codex_boost,
             filter_junk=args.filter_junk,
+            dedupe_channels=args.dedupe,
         )
         frags = []
         for n, ev in enumerate(evidence, 1):
@@ -199,6 +200,8 @@ def main() -> int:
     ap.add_argument("--depth", type=int, default=None, help="глубина каналов (дефолт top_k*5)")
     ap.add_argument("--codex-boost", type=float, default=None)
     ap.add_argument("--filter-junk", action="store_true")
+    ap.add_argument("--dedupe", action="store_true",
+                    help="снимать дубликаты узла внутри каналов (дефект индекса)")
     ap.add_argument("--out-json", default=None, help="сохранить выдачу/метрики в JSON")
     args = ap.parse_args()
 
@@ -228,7 +231,8 @@ def main() -> int:
     if args.live:
         params = (
             f" (rrf_k={args.rrf_k}, w=({args.w_dense},{args.w_lex}), depth={args.depth}, "
-            f"codex_boost={args.codex_boost}, filter_junk={args.filter_junk})"
+            f"codex_boost={args.codex_boost}, filter_junk={args.filter_junk}, "
+            f"dedupe={args.dedupe})"
         )
     print(f"\n# retrieval-bench [{label}]{params}")
     print(f"golden: {len(golden)} вопросов, answerable {n_answerable}")
