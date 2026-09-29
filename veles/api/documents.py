@@ -105,6 +105,13 @@ def _document_groups(
     группы ident (all и определённые серверные - их резолвер добавляет для
     ЧТЕНИЯ) документу по умолчанию не полагаются, иначе каждая личная загрузка
     стала бы видна всем."""
+    if group_param.strip() and groups_param.strip():
+        # ревью K7: молчаливый приоритет group= над access_groups= скрывал
+        # половину намерения админа - требуем выбрать что-то одно
+        raise HTTPException(
+            status_code=400,
+            detail="укажите что-то одно: group= (выбор группы) или access_groups= (админ)",
+        )
     if group_param.strip():
         return [group_param.strip()]
     if groups_param.strip():

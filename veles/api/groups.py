@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException, Request
 
-from ..policy.groups import ensure_groups_file, load_groups
+from ..policy.groups import GROUP_ALL, ensure_groups_file, load_groups
 
 router = APIRouter(prefix="/v1/groups", tags=["groups"])
 
@@ -38,4 +38,9 @@ def list_groups(request: Request, authorization: str = Header(default="")):
             for g in load_groups()
             if not g.id.startswith("user:")
         ]
+        # ревью K7: all действителен для загрузки даже когда админ перечислил
+        # в конфиге только свои группы - показываем всегда (иначе UI
+        # не предложит «видно всем», хотя POST group=all работает)
+        + ([] if any(g.id == GROUP_ALL for g in load_groups())
+           else [{"id": GROUP_ALL, "title": "Видно всем"}])
     }

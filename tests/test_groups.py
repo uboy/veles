@@ -84,10 +84,13 @@ def write_groups(data, groups: list[dict]) -> None:
 
 
 def upload(client: TestClient, *, text: str = DOC_V1, title: str = DOC_TITLE,
-           group: str | None = None, headers: dict | None = None):
+           group: str | None = None, access_groups: str | None = None,
+           headers: dict | None = None):
     payload: dict = {"text": text, "title": title}
     if group is not None:
         payload["group"] = group
+    if access_groups is not None:
+        payload["access_groups"] = access_groups
     return client.post("/v1/documents", json=payload, headers=headers or {})
 
 
@@ -139,7 +142,8 @@ def test_groups_endpoint_custom_config_and_override(headers_env, monkeypatch, tm
     monkeypatch.setenv("VELES_GROUPS_FILE", str(custom))
     override = make_app(headers_env["bundle"])
     items = override.get("/v1/groups", headers=h(PETROV)).json()["groups"]
-    assert [g["id"] for g in items] == ["legal"]
+    # ревью K7: all показываем всегда - выбор group=all работает и без него в конфиге
+    assert [g["id"] for g in items] == ["legal", "all"]
     # membership из переопределённого конфига доезжает до identity
     petrov = JwtHeaderResolver.from_env("headers").resolve(h(PETROV))
     assert "legal" in petrov.groups
@@ -247,6 +251,20 @@ def test_upload_unknown_group_400_no_job(headers_env) -> None:
 
     assert client.get("/v1/documents/jobs", headers=h(IVANOV)).json()["jobs"] == []
     assert not (headers_env["data"] / "uploads" / user_dir(IVANOV) / f"{DOC_SLUG}.md").exists()
+
+
+def test_upload_group_and_access_groups_conflict_400(headers_env) -> None:
+    """Ревью K7: одновременные group= и access_groups= - 400 (раньше access_groups
+    молча терялся). У админа каждый параметр по отдельности работает."""
+    client = make_app(headers_env["bundle"])
+    boss_h = {"X-OpenWebUI-User-Email": "boss@corp.ru", "X-OpenWebUI-User-Name": "boss"}
+    r = upload(client, group="test-dept", headers=boss_h, access_groups="legal,finance")
+    assert r.status_code == 400
+    assert "одно" in r.json()["detail"]
+    assert client.get("/v1/documents/jobs", headers=boss_h).json()["jobs"] == []
+
+    r2 = upload(client, access_groups="legal,finance", headers=boss_h)
+    assert r2.status_code == 202  # админский access_groups сам по себе жив
 
 
 def test_upload_without_group_stays_personal(headers_env) -> None:
