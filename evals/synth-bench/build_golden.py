@@ -18,7 +18,7 @@ VELES_DATA берётся из конфига veles-чекаута (env VELES_RE
 ~/proj/veles-bench/veles на стенд). CUDA скрыт: эмбеддинг запроса на CPU.
 
 Запуск (стенд):
-  VELES_REPO=$HOME/proj/veles-bench/vels CUDA_VISIBLE_DEVICES= PYTHONUNBUFFERED=1 \
+  VELES_REPO=$HOME/proj/veles-bench/veles CUDA_VISIBLE_DEVICES= PYTHONUNBUFFERED=1 \
   ~/veles-venv/bin/python build_golden.py --secrets-file ~/secrets/veles-facade.env \
       --rrncb-csv ~/proj/veles-bench/rrncb/rrncb_public_dataset.csv \
       --miniqa bench/miniqa-vyshka-module1-v1.json --out golden.jsonl
