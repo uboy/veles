@@ -2,7 +2,7 @@
 
 POST /v1/knowledge/query  - native API (decision, answer, citations, diagnostics)
 POST /v1/chat/completions - совместимость для Open WebUI и других клиентов
-GET  /healthz
+GET  /healthz /readyz (живость / готовность индекса, K6)
 
 Запуск: python -m veles serve [--host] [--port]
 Личность запроса (K1): VELES_IDENTITY_MODE=static (дефолт, один владелец,
@@ -40,6 +40,7 @@ from ..policy.identity import (
 )
 from ..retrieval.retriever import hybrid_search
 from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
+from .ratelimit import install_rate_limit
 
 EMBED_DIM = 384
 EMBED_MODEL = "intfloat/multilingual-e5-small"
@@ -311,6 +312,8 @@ def create_app(
         yield
 
     app = FastAPI(title="Veles Knowledge API", version="0.4.0", lifespan=lifespan)
+    # rate-limit фасада (K6): скользящее окно per-identity/per-token (VELES_RATE_LIMIT_RPM)
+    install_rate_limit(app, state)
 
     def _auth(authorization: str) -> None:
         token = state["token"]
@@ -493,9 +496,25 @@ def create_app(
         )
         return HTMLResponse("\n".join(parts), status_code=200)
 
+    def _index_loaded() -> bool:
+        # честная готовность (K6): pipeline создаётся только после успешной
+        # load_index() в _pipeline() - до неё (упавший warmup, нет индекса)
+        # /readyz обязан быть 503, а /healthz оставаться живостью
+        with _pipeline_lock:
+            return state["pipeline"] is not None
+
     @app.get("/healthz")
     def healthz() -> dict:
-        return {"status": "ok", "ts": time.time()}
+        """Liveness: процесс жив (проба systemd/monitoring). Готовность индекса -
+        отдельное поле index_loaded и эндпоинт /readyz (K6)."""
+        return {"status": "ok", "ts": time.time(), "index_loaded": _index_loaded()}
+
+    @app.get("/readyz")
+    def readyz() -> JSONResponse:
+        """Readiness: 200 только с загруженным индексом, до готовности - 503."""
+        if _index_loaded():
+            return JSONResponse({"status": "ready", "index_loaded": True})
+        return JSONResponse({"status": "starting", "index_loaded": False}, status_code=503)
 
     @app.get("/v1/models")
     def list_models(request: Request, authorization: str = Header(default="")) -> dict:
@@ -713,7 +732,19 @@ def create_app(
               ["<p><i>Пока нет данных. Отправьте боту /task текст - задача появится здесь.</i></p>"]),
             "</body></html>",
         ]
-        return HTMLResponse(NEWLINE.join(html))
+        # security-заголовки HTML-страницы трекера (K6); JSON-ответы и ошибки
+        # не трогаются. CSP строгий без unsafe-inline: на странице нет
+        # инлайн-стилей/скриптов, а переходы по ссылкам CSP не ограничивает.
+        html_headers = {
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": (
+                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; "
+                "form-action 'none'"
+            ),
+        }
+        return HTMLResponse(NEWLINE.join(html), headers=html_headers)
 
     @app.get("/tracker/file/{kind}/{name}")
     def tracker_file(
