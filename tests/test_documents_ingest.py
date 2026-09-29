@@ -785,3 +785,67 @@ def test_discard_l0_warns_on_unlink_failure(kb_env, monkeypatch, caplog) -> None
     with caplog.at_level(_logging.WARNING, logger="veles.ingest.queue"):
         queue._discard_l0(job)  # не бросает
     assert any("не удалён" in r.message for r in caplog.records)
+
+
+# --- K13 (cherry-pick d135953): iter_documents не отдаёт каталог-близнец дважды ---
+
+def _doc_for_dedupe(tmp_path):
+    """Минимальный канон-документ с одним узлом (для теста дедупа каталогов)."""
+    from veles.canonical.model import CanonicalDocument, CanonicalNode
+    from veles.canonical.store import save_document
+
+    doc = CanonicalDocument(
+        document_id="docs/Проверочный акт.pdf",
+        title="Проверочный акт",
+        parser_profile="pymupdf-text",
+        nodes=[
+            CanonicalNode(
+                logical_node_id="n1",
+                node_version_id="v1",
+                text="Единственная норма проверочного акта.",
+                provenance={"adapter": "pymupdf-text", "source_id": "docs/Проверочный акт.pdf", "page": 1},
+            )
+        ],
+    )
+    save_document(doc, root=tmp_path / "canonical")
+    return doc
+
+
+def test_iter_documents_dedups_twin_catalog(tmp_path, capsys):
+    """Два каталога одного document_id (легаси-близнецы до фикса имени 28.09):
+    iter_documents отдаёт документ ОДИН раз - иначе build_index двойно-индексирует
+    контент (прецедент прода 29.09: НК РФ 46 355 узлов в индексе при ~24 000 в
+    каноне). Без фикса тест падает: docs было бы 2. Побеждает первый каталог в
+    sorted-порядке, дубль - предупреждение в stderr."""
+    import shutil
+
+    from veles.canonical.store import iter_documents
+
+    doc = _doc_for_dedupe(tmp_path)
+    canon = tmp_path / "canonical"
+    shutil.copytree(canon / "docs_Проверочный_акт.pdf",
+                    canon / "docs_Проверочный_акт_legacy_no_hash")
+    docs = list(iter_documents(root=canon))
+    assert len(docs) == 1  # дубль пропущен, документ не задвоен
+    assert docs[0].document_id == doc.document_id
+    assert "дубль document_id" in capsys.readouterr().err  # предупреждение в stderr
+
+
+def test_iter_documents_dedupe_keeps_other_documents(tmp_path, capsys):
+    """Негатив перегиба: каталоги РАЗНЫХ document_id дедуп не трогает - оба
+    отдаются (иначе фикс съел бы легитимные документы)."""
+    from veles.canonical.store import iter_documents
+
+    _doc_for_dedupe(tmp_path)
+    second = _doc_for_dedupe(tmp_path)
+    second.document_id = "docs/Второй акт.pdf"
+    second.title = "Второй акт"
+    from veles.canonical.store import save_document
+
+    save_document(second, root=tmp_path / "canonical")
+    docs = list(iter_documents(root=tmp_path / "canonical"))
+    assert sorted(d.document_id for d in docs) == [
+        "docs/Второй акт.pdf",
+        "docs/Проверочный акт.pdf",
+    ]
+    capsys.readouterr()

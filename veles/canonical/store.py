@@ -283,17 +283,46 @@ def iter_documents(
     root: Path | None = None, include_revisions: bool = False
 ) -> Iterator[CanonicalDocument]:
     """Текущие ревизии всех документов; с include_revisions=True - и архивные
-    (revision-r*/ внутри doc_dir, status=superseded) - для сборки полного индекса."""
+    (revision-r*/ внутри doc_dir, status=superseded) - для сборки полного индекса.
+
+    Один document_id отдаётся ОДИН раз (K13): легаси-каталоги-близнецы (до фикса
+    имени 28.09 каталог обрезался без хеш-суффикса) с тем же document_id
+    пропускаются с предупреждением - иначе build_index индексировал обе копии
+    как один документ (двойной контент в поиске; прецедент прода 29.09: НК РФ
+    46 355 узлов в индексе при ~24 000 в каноне). Первый каталог в sorted-порядке
+    побеждает; удаление (delete_document) по-прежнему убирает ВСЕ каталоги
+    документа. (Предупреждение - не ошибка: содержимое близнецов на проде
+    идентично, разбирает владелец по отчёту scripts/ingest_audit.py.)"""
     base = root or CANONICAL_DIR
     if not base.exists():
         return
+    seen_ids: set[str] = set()
     for d in sorted(base.iterdir()):
         if (d / "manifest.json").exists():
-            yield _load_document_dir(d)
+            doc_id = _manifest_document_id(d)
+            if doc_id and doc_id in seen_ids:
+                print(
+                    f"предупреждение: {d} - дубль document_id {doc_id!r} в {base}, "
+                    "пропущен (первый каталог побеждает; см. scripts/ingest_audit.py)",
+                    file=sys.stderr,
+                )
+            else:
+                if doc_id:
+                    seen_ids.add(doc_id)
+                yield _load_document_dir(d)
         if include_revisions:
             for rdir in sorted(d.glob("revision-r*")):
                 if _archive_complete(rdir):
                     yield _load_document_dir(rdir, archived=True)
+
+
+def _manifest_document_id(d: Path) -> str:
+    """document_id из манифеста каталога; '' - манифест не читается/без поля."""
+    try:
+        manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return str(manifest.get("document_id") or "")
 
 
 @dataclass
