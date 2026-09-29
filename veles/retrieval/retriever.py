@@ -110,8 +110,8 @@ def hybrid_search(
     бонус узлам документа, явно упомянутого в вопросе («согласно НК РФ»),
     в единицах вклада ранга 1 одного канала (bonus = codex_boost/(rrf_k+1));
     filter_junk - отсекать мусорные пустышки из выдачи (is_junk_node);
-    dedupe_channels - снимать дубликаты узла внутри канала (прод-индекс
-    содержит 52% узлов дважды; см. dedupe_pairs)."""
+    dedupe_channels - снимать дубликаты узла внутри канала (см. dedupe_pairs;
+    с K14 дефолт True: на чистом индексе no-op, защищает от возврата дублей)."""
     from ..config import DEFAULT_ACCESS_GROUPS
 
     if rrf_k is None:
