@@ -1,0 +1,81 @@
+2026-09-29T21:42:53+03:00 bench golden live START (дефолты config: codex_boost=2.0, depth=25, dedupe=False)
+
+# retrieval-bench [live] (rrf_k=None, w=(1.0,1.0), depth=None, codex_boost=None, filter_junk=False, dedupe=False)
+golden: 72 вопросов, answerable 57
+**Итого**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.895 | 0.772 | 0.828 | 0.635 |
+
+**По provenance**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.895 | 0.772 | 0.828 | 0.635 |
+| auto | 31 | 0.871 | 0.645 | 0.747 | 0.587 |
+| manual | 3 | 1.000 | 1.000 | 1.000 | 0.733 |
+| miniqa | 10 | 1.000 | 1.000 | 1.000 | 0.540 |
+| rrncb | 13 | 0.846 | 0.846 | 0.846 | 0.800 |
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.895 | 0.772 | 0.828 | 0.635 |
+| rrncb | 16 | 0.688 | 0.625 | 0.656 | 0.650 |
+| кодексы | 20 | 0.950 | 0.850 | 0.892 | 0.810 |
+| лекции | 21 | 1.000 | 0.809 | 0.897 | 0.457 |
+
+промахи R@5 (6): k11-006, k11-013, k11-038, k11-039, k11-044, k11-054
+метрики: /tmp/k14/bench-golden-after.json
+2026-09-29T21:43:17+03:00 bench rrncb50 live START
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 0.720 | 0.480 | 0.566 | 0.792 |
+| rrncb50 | 50 | 0.720 | 0.480 | 0.566 | 0.792 |
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 0.720 | 0.480 | 0.566 | 0.792 |
+| rrncb | 15 | 0.400 | 0.200 | 0.272 | 0.720 |
+| кодексы | 35 | 0.857 | 0.600 | 0.691 | 0.823 |
+
+промахи R@5 (14): rrncb50-002, rrncb50-008, rrncb50-012, rrncb50-014, rrncb50-016, rrncb50-017, rrncb50-019, rrncb50-025, rrncb50-027, rrncb50-029, rrncb50-045, rrncb50-047, rrncb50-049, rrncb50-050
+метрики: /tmp/k14/bench-rrncb50-after.json
+2026-09-29T21:43:38+03:00 bench codex-boost-check live START (answerable только)
+  File "<server-home>/proj/veles-bench/veles/evals/synth-bench/retrieval_bench.py", line 262, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "<server-home>/proj/veles-bench/veles/evals/synth-bench/retrieval_bench.py", line 212, in main
+    frags_by_qid = run_live(golden, args)
+                   ^^^^^^^^^^^^^^^^^^^^^^
+  File "<server-home>/proj/veles-bench/veles/evals/synth-bench/retrieval_bench.py", line 180, in run_live
+    out[entry["id"]] = frags
+        ~~~~~^^^^^^
+KeyError: 'id'
+2026-09-29T21:43:50+03:00 bench DEDUPE True: golden
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.895 | 0.772 | 0.828 | 0.635 |
+| rrncb | 16 | 0.688 | 0.625 | 0.656 | 0.650 |
+| кодексы | 20 | 0.950 | 0.850 | 0.892 | 0.810 |
+| лекции | 21 | 1.000 | 0.809 | 0.897 | 0.457 |
+
+промахи R@5 (6): k11-006, k11-013, k11-038, k11-039, k11-044, k11-054
+метрики: /tmp/k14/bench-golden-after-dedupe.json
+2026-09-29T21:44:18+03:00 bench DEDUPE True: rrncb50
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 0.720 | 0.480 | 0.566 | 0.792 |
+| rrncb | 15 | 0.400 | 0.200 | 0.272 | 0.720 |
+| кодексы | 35 | 0.857 | 0.600 | 0.691 | 0.823 |
+
+промахи R@5 (14): rrncb50-002, rrncb50-008, rrncb50-012, rrncb50-014, rrncb50-016, rrncb50-017, rrncb50-019, rrncb50-025, rrncb50-027, rrncb50-029, rrncb50-045, rrncb50-047, rrncb50-049, rrncb50-050
+метрики: /tmp/k14/bench-rrncb50-after-dedupe.json
+2026-09-29T21:44:39+03:00 bench ALL DONE

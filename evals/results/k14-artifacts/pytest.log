@@ -1,0 +1,11 @@
+........................................................................ [ 27%]
+...................................................................s.... [ 55%]
+........................................................................ [ 82%]
+.............................................                            [100%]
+=============================== warnings summary ===============================
+tests/test_slice.py:103
+  /tmp/veles-k14/tests/test_slice.py:103: SyntaxWarning: invalid escape sequence '\u'
+    raw = b"\ufeffline1\r\nline2 with text\r\n"
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+260 passed, 1 skipped, 1 warning in 9.57s

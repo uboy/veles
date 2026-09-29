@@ -1,0 +1,656 @@
+{
+ "new": {
+  "golden_abstain": [
+   {
+    "id": "k11-001",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-002",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-003",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-004",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-005",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-006",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-007",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-008",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-009",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-010",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-011",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-012",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-013",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-014",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-015",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-016",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-017",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-018",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-019",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-020",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-021",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-022",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-023",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-024",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-025",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-026",
+    "decision": "abstain",
+    "conf": 0.4
+   },
+   {
+    "id": "k11-027",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-028",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-029",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-030",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-031",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-032",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-033",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-034",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-035",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-036",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-037",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-038",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-039",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-040",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-041",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-042",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-043",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-044",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-045",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-046",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-047",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-048",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-049",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-050",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-051",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-052",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-053",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-054",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-055",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-056",
+    "decision": "abstain",
+    "conf": 0.4
+   },
+   {
+    "id": "k11-057",
+    "decision": "answer",
+    "conf": 1.0
+   }
+  ],
+  "cbc": [
+   {
+    "id": "cbc-001",
+    "abstain_expected": false,
+    "decision": "abstain",
+    "conf": 0.4
+   },
+   {
+    "id": "cbc-002",
+    "abstain_expected": false,
+    "decision": "abstain",
+    "conf": 0.3873
+   },
+   {
+    "id": "cbc-003",
+    "abstain_expected": true,
+    "decision": "abstain",
+    "conf": 0.4
+   },
+   {
+    "id": "cbc-004",
+    "abstain_expected": true,
+    "decision": "abstain",
+    "conf": 0.4
+   },
+   {
+    "id": "cbc-005",
+    "abstain_expected": true,
+    "decision": "abstain",
+    "conf": 0.4
+   },
+   {
+    "id": "cbc-006",
+    "abstain_expected": true,
+    "decision": "answer",
+    "conf": 1.0
+   }
+  ]
+ },
+ "old_dup": {
+  "golden_abstain": [
+   {
+    "id": "k11-001",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-002",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-003",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-004",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-005",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-006",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-007",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-008",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-009",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-010",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-011",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-012",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-013",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-014",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-015",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-016",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-017",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-018",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-019",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-020",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-021",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-022",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-023",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-024",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-025",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-026",
+    "decision": "abstain",
+    "conf": 0.4
+   },
+   {
+    "id": "k11-027",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-028",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-029",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-030",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-031",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-032",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-033",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-034",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-035",
+    "decision": "answer",
+    "conf": 0.7935
+   },
+   {
+    "id": "k11-036",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-037",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-038",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-039",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-040",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-041",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-042",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-043",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-044",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-045",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-046",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-047",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-048",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-049",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-050",
+    "decision": "answer",
+    "conf": 0.7935
+   },
+   {
+    "id": "k11-051",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-052",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-053",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-054",
+    "decision": "answer",
+    "conf": 0.7935
+   },
+   {
+    "id": "k11-055",
+    "decision": "answer",
+    "conf": 1.0
+   },
+   {
+    "id": "k11-056",
+    "decision": "answer",
+    "conf": 0.7935
+   },
+   {
+    "id": "k11-057",
+    "decision": "answer",
+    "conf": 1.0
+   }
+  ],
+  "cbc": [
+   {
+    "id": "cbc-001",
+    "abstain_expected": false,
+    "decision": "answer",
+    "conf": 0.7935
+   },
+   {
+    "id": "cbc-002",
+    "abstain_expected": false,
+    "decision": "answer",
+    "conf": 0.7566
+   },
+   {
+    "id": "cbc-003",
+    "abstain_expected": true,
+    "decision": "answer",
+    "conf": 0.7935
+   },
+   {
+    "id": "cbc-004",
+    "abstain_expected": true,
+    "decision": "answer",
+    "conf": 0.7935
+   },
+   {
+    "id": "cbc-005",
+    "abstain_expected": true,
+    "decision": "abstain",
+    "conf": 0.4
+   },
+   {
+    "id": "cbc-006",
+    "abstain_expected": true,
+    "decision": "answer",
+    "conf": 1.0
+   }
+  ]
+ }
+}

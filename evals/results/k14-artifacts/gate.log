@@ -1,0 +1,12 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 15760.62it/s]
+=== new: <server-home>/proj/veles-bench/veles/data/index
+golden answerable 57: abstain 2 (3.5%)
+   abstain k11-026 conf=0.4
+   abstain k11-056 conf=0.4
+cbc: верных решений гейта 3/6; cbc-001:abstain(0.4) cbc-002:abstain(0.3873) cbc-003:abstain(0.4) cbc-004:abstain(0.4) cbc-005:abstain(0.4) cbc-006:answer(1.0)
+=== old_dup: <server-home>/proj/veles-bench/veles/data/index-backup-20260929-2137
+golden answerable 57: abstain 1 (1.8%)
+   abstain k11-026 conf=0.4
+cbc: верных решений гейта 3/6; cbc-001:answer(0.7935) cbc-002:answer(0.7566) cbc-003:answer(0.7935) cbc-004:answer(0.7935) cbc-005:abstain(0.4) cbc-006:answer(1.0)
+артефакт: /tmp/k14/gate-old-new.json

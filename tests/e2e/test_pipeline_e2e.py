@@ -204,8 +204,13 @@ def test_answer_second_document_txt_lines(mini_corpus) -> None:
     assert "15 минут" in d["answer"]
 
 
-def test_abstain_outside_corpus_with_reason_and_hint(mini_corpus) -> None:
-    """Сценарий 2: вопрос вне корпуса -> abstain с причиной и подсказкой."""
+def test_abstain_outside_corpus_with_reason_and_hint(mini_corpus, monkeypatch) -> None:
+    """Сценарий 2: вопрос вне корпуса -> abstain с причиной и подсказкой.
+
+    K14: дефолтный гейт перекалиброван под чистый индекс (0.55 -> 0.35,
+    отказ вне корпуса на мини-корпусе делает синтез, см. config.py) - тест
+    проверяет ПУТЬ отрисовки отказа, поэтому порог поднимается явно."""
+    monkeypatch.setattr("veles.policy.answer.ABSTAIN_CONFIDENCE", 0.9)
     bundle, _ = mini_corpus
     client = make_client(bundle)
     r = client.post("/v1/knowledge/query", json={"query": OUT_CORPUS_QUERY})

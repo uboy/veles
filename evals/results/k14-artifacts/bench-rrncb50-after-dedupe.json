@@ -1,0 +1,517 @@
+{
+ "mode": "live",
+ "params": {
+  "golden": "rrncb50.jsonl",
+  "cache": "<server-home>/proj/veles-bench/veles/evals/synth-bench/retrieval-cache.json",
+  "live": true,
+  "top_k": 5,
+  "rrf_k": null,
+  "w_dense": 1.0,
+  "w_lex": 1.0,
+  "depth": null,
+  "codex_boost": null,
+  "filter_junk": false,
+  "dedupe": true,
+  "out_json": "/tmp/k14/bench-rrncb50-after-dedupe.json"
+ },
+ "total": {
+  "n": 50,
+  "r_at_5": 0.72,
+  "top1": 0.48,
+  "mrr": 0.5657,
+  "p_at_5": 0.792
+ },
+ "by_provenance": {
+  "rrncb50": {
+   "n": 50,
+   "r_at_5": 0.72,
+   "top1": 0.48,
+   "mrr": 0.5657,
+   "p_at_5": 0.792
+  }
+ },
+ "by_domain": {
+  "rrncb": {
+   "n": 15,
+   "r_at_5": 0.4,
+   "top1": 0.2,
+   "mrr": 0.2722,
+   "p_at_5": 0.72
+  },
+  "кодексы": {
+   "n": 35,
+   "r_at_5": 0.8571,
+   "top1": 0.6,
+   "mrr": 0.6914,
+   "p_at_5": 0.8229
+  }
+ },
+ "misses": [
+  "rrncb50-002",
+  "rrncb50-008",
+  "rrncb50-012",
+  "rrncb50-014",
+  "rrncb50-016",
+  "rrncb50-017",
+  "rrncb50-019",
+  "rrncb50-025",
+  "rrncb50-027",
+  "rrncb50-029",
+  "rrncb50-045",
+  "rrncb50-047",
+  "rrncb50-049",
+  "rrncb50-050"
+ ],
+ "rows": [
+  {
+   "id": "rrncb50-001",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-002",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-003",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-004",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-005",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-006",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.2,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-007",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-008",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.8
+  },
+  {
+   "id": "rrncb50-009",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-010",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.4
+  },
+  {
+   "id": "rrncb50-011",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.25,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-012",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.2
+  },
+  {
+   "id": "rrncb50-013",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.3333333333333333,
+   "p5": 0.2
+  },
+  {
+   "id": "rrncb50-014",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-015",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.3333333333333333,
+   "p5": 0.6
+  },
+  {
+   "id": "rrncb50-016",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-017",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.2
+  },
+  {
+   "id": "rrncb50-018",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-019",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.6
+  },
+  {
+   "id": "rrncb50-020",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-021",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-022",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.6
+  },
+  {
+   "id": "rrncb50-023",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "rrncb50-024",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-025",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-026",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-027",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-028",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "rrncb50-029",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.4
+  },
+  {
+   "id": "rrncb50-030",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.6
+  },
+  {
+   "id": "rrncb50-031",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-032",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "rrncb50-033",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.3333333333333333,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-034",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-035",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.3333333333333333,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-036",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-037",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.25,
+   "p5": 0.8
+  },
+  {
+   "id": "rrncb50-038",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-039",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.6
+  },
+  {
+   "id": "rrncb50-040",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-041",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.25,
+   "p5": 0.6
+  },
+  {
+   "id": "rrncb50-042",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.4
+  },
+  {
+   "id": "rrncb50-043",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-044",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-045",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.4
+  },
+  {
+   "id": "rrncb50-046",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "rrncb50-047",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.4
+  },
+  {
+   "id": "rrncb50-048",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "rrncb50-049",
+   "provenance": "rrncb50",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  },
+  {
+   "id": "rrncb50-050",
+   "provenance": "rrncb50",
+   "domain": "кодексы",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  }
+ ]
+}
