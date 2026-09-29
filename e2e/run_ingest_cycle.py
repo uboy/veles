@@ -441,12 +441,19 @@ def main() -> int:
                    f"цитат {len(cites_new)}, наш документ: "
                    f"{any(c.get('document_id') == doc_id_txt for c in cites_new if isinstance(c, dict))}",
                    ok)
+            # критерий: в выдаче по marker_v1 нет НИ ОДНОЙ цитаты r1 нашего
+            # документа. Цитата r2-узла допустима: в маленьком корпусе top_k=5
+            # набирается всегда, а слабое векторное сходство r2 с запросом
+            # фильтр superseded не нарушает (проверка ревизии - по revision_id).
             cites_old = search(facade.base, docs["txt"]["marker_v1"])
-            ok = not any(c.get("document_id") == doc_id_txt for c in cites_old
-                         if isinstance(c, dict))
-            record("R5", "поиск: старый маркер r1 больше не виден", "0 цитат нашего документа",
-                   f"цитат {len(cites_old)}, наш документ: "
-                   f"{any(c.get('document_id') == doc_id_txt for c in cites_old if isinstance(c, dict))}",
+            old_rev = [c for c in cites_old if isinstance(c, dict)
+                       and c.get("document_id") == doc_id_txt
+                       and c.get("revision_id") == "r1"]
+            ok = not old_rev
+            record("R5", "поиск: старый маркер r1 больше не виден",
+                   "0 цитат r1-ревизии нашего документа",
+                   f"цитат {len([c for c in cites_old if isinstance(c, dict)])}, "
+                   f"цитат r1 нашего документа: {len(old_rev)}",
                    ok)
 
             # 4. рестарт фасада: документ на месте (K3/K4 механика)
