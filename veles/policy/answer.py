@@ -33,7 +33,10 @@ def _confidence(evidence: list[Evidence]) -> float:
     (фикс ревью Ф1: бонус после капа обнулял различимость)."""
     if not evidence:
         return 0.0
-    top = evidence[0].rrf
+    # ревью K12 P1: confidence по ОРГАНИЧЕСКОМУ скору (rrf_base, до codex-буста) -
+    # бонус равен потолку нормировки, и по финальному rrf любой забушенный узел
+    # получал бы 1.0, отключая abstain-гейт для вопросов «согласно НК РФ»
+    top = evidence[0].rrf_base if evidence[0].rrf_base is not None else evidence[0].rrf
     both_channels = evidence[0].dense_rank is not None and evidence[0].bm25_rank is not None
     ceiling = 2.0 / (RRF_K + 1)
     factor = 1.15 if both_channels else 0.8
@@ -74,7 +77,11 @@ def _conflict_candidates(evidence: list[Evidence]) -> list[dict]:
     if a.citations[0].document_id == b.citations[0].document_id:
         return []
     ceiling = 2.0 / (RRF_K + 1)
-    if abs(a.rrf - b.rrf) / ceiling >= CONFLICT_SCORE_DELTA:
+    # ревью K12 P1: дельта по органическим скорам (rrf_base) - буст одного
+    # документа не должен подавлять детект конфликтующих редакций
+    a_rrf = a.rrf_base if a.rrf_base is not None else a.rrf
+    b_rrf = b.rrf_base if b.rrf_base is not None else b.rrf
+    if abs(a_rrf - b_rrf) / ceiling >= CONFLICT_SCORE_DELTA:
         return []
     sig_a, sig_b = edition_signals(a.text), edition_signals(b.text)
     if not sig_a or not sig_b or (sig_a & sig_b):
