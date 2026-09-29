@@ -39,7 +39,13 @@ def token() -> str:
 
 
 class FacadeError(RuntimeError):
-    """Фасад ответил ошибкой (>=400): detail показывается пользователю как есть."""
+    """Фасад ответил ошибкой (>=400): detail показывается пользователю как есть.
+    status - HTTP-код, если известен (ревью K9: watch-loop отличает 404 -
+    джоб потерян окончательно - от 5xx, когда стоит ждать дальше)."""
+
+    def __init__(self, detail: str, status: int = 0):
+        super().__init__(detail)
+        self.status = status
 
 
 def _detail(r: Any) -> str:
@@ -85,7 +91,7 @@ def get_job(vx_client: Any, job_id: str) -> dict:
     """Текущий статус джоба: queued/running/done/failed (+error, title, groups)."""
     r = vx_client.get(f"{base_url()}/v1/documents/jobs/{job_id}", headers=_auth_headers())
     if r.status_code >= 400:
-        raise FacadeError(_detail(r))
+        raise FacadeError(_detail(r), status=r.status_code)
     r.raise_for_status()
     return r.json()
 

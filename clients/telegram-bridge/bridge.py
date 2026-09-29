@@ -388,9 +388,16 @@ def doc_watch_loop(job_id: str, chat_id: int, fname: str) -> None:
                     break
                 record = None
             except documents.FacadeError as e:
-                send_html(chat_id, f"❌ Не удалось: {documents.esc(fname)} - "
-                                   f"{documents.esc(str(e))}")
-                return
+                # ревью K9 P2: явный 5xx - временный сбой (за reverse-proxy 502),
+                # ждём до дедлайна; всё остальное (404, 4xx, код неизвестен) -
+                # окончательный отказ, как раньше
+                if getattr(e, "status", 0) >= 500:
+                    log.warning("doc job status %s: %s", e.status, str(e)[:200])
+                    record = None
+                else:
+                    send_html(chat_id, f"❌ Не удалось: {documents.esc(fname)} - "
+                                       f"{documents.esc(str(e))}")
+                    return
             except Exception:  # noqa: BLE001 - фасад мог перезапускаться, ждём дальше
                 log.exception("doc job status failed")
                 record = None
@@ -430,7 +437,7 @@ def handle_docgroup(chat_id: int, arg: str) -> None:
     if not arg:
         current = load_doc_group(chat_id)
         lines = [f"Группа загрузок этого чата: "
-                 f"{current or 'не выбрана (личная user:...)'}", "",
+                 f"{documents.esc(current) or 'не выбрана (личная user:...)'}", "",
                  "Выбор: /docgroup <id>. Группы:"]
         lines += [f"- {documents.esc(g.get('id'))} - {documents.esc(g.get('title'))}"
                   for g in groups]
