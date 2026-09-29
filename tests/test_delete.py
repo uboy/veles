@@ -376,6 +376,30 @@ def test_delete_seeded_canon_document(kb_env) -> None:
     assert (kb_env["data"] / "trash" / r.json()["trash"][0] / "nodes.jsonl").exists()
 
 
+def test_delete_finds_legacy_twin_catalog(kb_env) -> None:
+    """Ревью K13 P1: легаси-каталог-близнец (имя НЕ по текущей формуле _doc_dir,
+    document_id в манифесте совпадает) находится фолбэк-сканом и удаляется вместе
+    с формульным - без фикса близнец оставался в каноне, и пересборка воскрешала
+    «удалённый» документ."""
+    import shutil
+
+    client = make_static_client(kb_env["bundle"])
+    assert seed_visible(client)
+
+    legacy = kb_env["canonical"] / "legacy_ugolovny_code_catalog"
+    shutil.copytree(_doc_dir(SEED_ID, kb_env["canonical"]), legacy)
+    assert legacy.exists()
+
+    r = client.delete(f"/v1/documents/{SEED_ID}")
+    assert r.status_code == 200
+    assert not seed_visible(client)
+    assert not legacy.exists()  # близнец уехал в trash вместе с формульным
+    trash_names = r.json()["trash"]
+    assert len(trash_names) == 2  # оба каталога
+    for name in trash_names:
+        assert (kb_env["data"] / "trash" / name / "manifest.json").exists()
+
+
 # --------------------------------------------------------- квоты и re-upload
 
 

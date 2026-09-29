@@ -153,20 +153,45 @@ def trash_root() -> Path:
 def _find_doc_dirs(document_id: str, root: Path | None = None) -> list[tuple[Path, dict]]:
     """(doc_dir, manifest) документа по всем корням канона. Guard обхода каталогов:
     _doc_dir пропускает '.'/'..' в id (допустимые для имени символы), а удаление -
-    разрушительная операция, поэтому doc_dir обязан лежать НЕ глубже корня канона."""
-    found = []
-    for canon in ([root] if root is not None else canonical_roots()):
+    разрушительная операция, поэтому doc_dir обязан лежать НЕ глубже корня канона.
+
+    Ревью K13 P1: формульный путь (_doc_dir по текущей формуле имени) не находит
+    легаси-каталоги-близнецы (имена до фикса 28.09, без/с другим хеш-хвостом) -
+    удаление оставляло близнеца в каноне, и пересборка воскрешала «удалённый»
+    документ. Скан всех каталогов канона со сверкой document_id из манифеста
+    выполняется ВСЕГДА (сотни каталогов, путь только DELETE - не горячий):
+    формульный каталог существует или нет - близнецы ловятся в обоих случаях."""
+    found: list[tuple[Path, dict]] = []
+    seen: set[Path] = set()
+    roots = [root] if root is not None else canonical_roots()
+    for canon in roots:
+        canon = Path(canon)
+        if not canon.is_dir():
+            continue
         d = _doc_dir(document_id, canon)
-        if d.parent != canon:
-            continue
-        mpath = d / "manifest.json"
-        if not mpath.exists():
-            continue
-        try:
-            manifest = json.loads(mpath.read_text(encoding="utf-8"))
-        except (OSError, ValueError):  # noqa: BLE001 - битый манифест не для удаления
-            continue
-        found.append((d, manifest))
+        if d.parent == canon:
+            mpath = d / "manifest.json"
+            if mpath.exists():
+                try:
+                    manifest = json.loads(mpath.read_text(encoding="utf-8"))
+                except (OSError, ValueError):  # noqa: BLE001 - битый манифест не для удаления
+                    manifest = None
+                if manifest is not None:
+                    found.append((d, manifest))
+                    seen.add(d.resolve())
+        for child in sorted(canon.iterdir()):
+            if not child.is_dir() or child.resolve() in seen:
+                continue
+            mpath = child / "manifest.json"
+            if not mpath.exists():
+                continue
+            try:
+                manifest = json.loads(mpath.read_text(encoding="utf-8"))
+            except (OSError, ValueError):  # noqa: BLE001 - битый манифест не документ
+                continue
+            if str(manifest.get("document_id") or "") == document_id:
+                found.append((child, manifest))
+                seen.add(child.resolve())
     return found
 
 

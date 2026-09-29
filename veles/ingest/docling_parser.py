@@ -63,6 +63,17 @@ class DoclingParserAdapter:
         section_idx = 0
         section_path: list[str] = []
 
+        def current_parent() -> str:
+            # До первого заголовка секций ещё нет: нумерация секций начинается
+            # с s0001 (инкремент до создания узла), ссылка на #s0000 висела бы
+            # в никуда - находка аудита K13 на проде: 83 image-узла с битым
+            # parent_id на несуществующую секцию. Контент прелюдии (до первого
+            # заголовка) привязывается к корню документа. parent_id не входит
+            # в node_version_id, поэтому пересчёт версий не затронут.
+            if section_idx == 0:
+                return f"{rel}#root"
+            return f"{rel}#s{section_idx:04d}"
+
         def add_par(text: str, page: int | None) -> None:
             nonlocal idx
             if not text or len(text.strip()) < 25:
@@ -71,7 +82,7 @@ class DoclingParserAdapter:
             document.add_node(
                 logical_node_id=f"{rel}#p{idx:05d}",
                 node_type="paragraph",
-                parent_id=f"{rel}#s{section_idx:04d}",
+                parent_id=current_parent(),
                 heading_path=list(section_path),
                 text=" ".join(text.split()),
                 provenance=Provenance(
@@ -119,7 +130,7 @@ class DoclingParserAdapter:
                 document.add_node(
                     logical_node_id=f"{rel}#img{img_idx:03d}",
                     node_type="image",
-                    parent_id=f"{rel}#s{section_idx:04d}",
+                    parent_id=current_parent(),
                     heading_path=list(section_path),
                     text=f"Изображение. {caption}"[:500],
                     provenance=Provenance(
@@ -154,7 +165,7 @@ class DoclingParserAdapter:
                     document.add_node(
                         logical_node_id=f"{rel}#p{idx:05d}",
                         node_type="paragraph",
-                        parent_id=f"{rel}#s{section_idx:04d}",
+                        parent_id=current_parent(),
                         heading_path=list(section_path) + ["Таблица"],
                         text="Таблица. " + tbl.strip()[:3000],
                         provenance=Provenance(
