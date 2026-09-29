@@ -57,20 +57,23 @@ LCS_MIN_CHARS = 40
 GLM_MAX_TOKENS = 3072
 
 # Живые вопросы владельца (заказ K11): соосность блоков, транспортный налог,
-# управление производством. expected_nodes ищем подстрокой в индексе; у вопросов
-# без находки expected_nodes=[] и честная пометка в note.
+# управление производством. expected_nodes ищутся ПОЛНОТЕКСТНО по индексу
+# (подстрока probe, до 5 узлов); в note честно фиксируется, сколько из них
+# retrieval дал в top-5. Вопросы НЕ выбраковываются автоматом - если retrieval
+# промахнулся, это само по себе результат замера (COV покажет по фрагментам).
 MANUAL_QUESTIONS = [
     {
         "question": "Как проверяют соосность рядов укладываемых блоков фундамента?",
         "probe": "Соосность рядов укладываемых блоков",
     },
     {
-        "question": "Кто является плательщиком транспортного налога?",
+        "question": "Кто является плательщиком транспортного налога согласно НК РФ?",
         "probe": "транспортный налог",
+        "doc_filter": "Налоговый кодекс",
     },
     {
-        "question": "Что такое норма управляемости и как она влияет на структуру организации?",
-        "probe": "Норма управляемости",
+        "question": "Как выбор производственной модели зависит от сроков хранения продукции?",
+        "probe": "сроков хранения продукции",
     },
 ]
 
@@ -192,8 +195,13 @@ def main() -> int:
             if row.get("answer", "").strip() and row["answer"].strip() != "-":
                 rrncb_rows.append(row)
     # фиксированный корпус: только документы, присутствующие в прод-индексе
-    idx_docs = set(docs)
-    rrncb_rows = [r for r in rrncb_rows if r["document"] in idx_docs]
+    # (в CSV имена без префикса docs/ - матчим по basename)
+    base_by_name = {d.split("/")[-1]: d for d in docs}
+    rrncb_rows = [
+        {**r, "document": base_by_name.get(r["document"].split("/")[-1], "")}
+        for r in rrncb_rows
+    ]
+    rrncb_rows = [r for r in rrncb_rows if r["document"] in docs]
     sample = rng.sample(rrncb_rows, min(args.rrncb_sample, len(rrncb_rows)))
     kept_rrncb = 0
     rrncb_stat = {"cand": len(sample)}
@@ -328,18 +336,30 @@ def main() -> int:
     # ---- 4. живые вопросы владельца (manual, не выбраковываются) ----------
     for mq in MANUAL_QUESTIONS:
         frags = retrieve(mq["question"])
-        hit_nodes = [
-            fr["node_version_id"] for fr in frags if mq["probe"].lower() in fr["text"].lower()
-        ]
+        top5_ids = {fr["node_version_id"] for fr in frags}
+        # полнотекстовая проба по всему индексу (до 5 узлов; опциональный фильтр документа)
+        probe_nodes = []
+        for nid, meta in bundle.node_meta.items():
+            if mq["probe"].lower() in meta["text"].lower():
+                if mq.get("doc_filter") and mq["doc_filter"] not in meta["document_id"]:
+                    continue
+                probe_nodes.append(nid)
+                if len(probe_nodes) >= 5:
+                    break
+        in_top5 = [n for n in probe_nodes if n in top5_ids]
+        first_doc = ""
+        if probe_nodes:
+            first_doc = bundle.node_meta[probe_nodes[0]]["document_id"]
+        elif frags:
+            first_doc = frags[0]["document_id"]
         add(
             {
                 "question": mq["question"],
-                "expected_nodes": hit_nodes,
-                "source_doc": frags[0]["document_id"] if frags else "",
+                "expected_nodes": probe_nodes,
+                "source_doc": first_doc,
                 "provenance": "manual",
-                "note": "живой вопрос владельца; expected_nodes=подстрока в top-5 ("
-                + (f"найдено {len(hit_nodes)}" if hit_nodes else "НЕ найдено - валидация владельцем")
-                + ")",
+                "note": "живой вопрос владельца; полнотекстовая проба: узлов "
+                f"{len(probe_nodes)}, из них в top-5: {len(in_top5)}; валидация владельцем",
             }
         )
 
