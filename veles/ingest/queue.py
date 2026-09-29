@@ -377,6 +377,8 @@ class IngestQueue:
         # кап очереди (K8): проверка лимита и постановка атомарны - два
         # одновременных submit не могут переполнить очередь вдвоём
         self._submit_lock = threading.Lock()
+        # журнал джобов: append воркера и ротация под одним локом (ревью K8 P2)
+        self._ledger_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         if start_worker:
             self._thread = threading.Thread(
@@ -385,6 +387,14 @@ class IngestQueue:
             self._thread.start()
 
     # ------------------------------------------------------------- постановка
+
+    def at_capacity(self) -> tuple[bool, int]:
+        """Ненадёжная ранняя проверка капа (ревью K8 P2): кап может отпустить
+        между этой проверкой и submit - авторитетна только проверка в submit.
+        Нужна, чтобы обычный отказ не доходил до перезаписи L0 существующего
+        документа (перезапись необратима, L0 потом удаляется)."""
+        max_queued = queue_max_queued()
+        return (bool(max_queued) and self._q.qsize() >= max_queued), max_queued
 
     def submit(
         self, *, user_id: str, filename: str, title: str, document_id: str,
@@ -480,12 +490,15 @@ class IngestQueue:
             logger.warning("ротация журнала джобов не удалась: %s", e)
 
     def _append_ledger(self, job: Job) -> None:
+        # ротация+append под одним локом (ревью K8 P2): без него воркер мог
+        # держать append в момент rename - запись уезжала в .1 мимо активного
         try:
-            path = self._ledger_path()
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self._rotate_ledger_if_needed(path)
-            with path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(job.to_dict(), ensure_ascii=False) + "\n")
+            with self._ledger_lock:
+                path = self._ledger_path()
+                path.parent.mkdir(parents=True, exist_ok=True)
+                self._rotate_ledger_if_needed(path)
+                with path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(job.to_dict(), ensure_ascii=False) + "\n")
         except OSError as e:  # noqa: BLE001 - журнал не должен ломать загрузку
             logger.warning("журнал джобов недоступен: %s", e)
 
