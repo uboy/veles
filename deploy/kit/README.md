@@ -60,6 +60,8 @@ find "$HOME" -maxdepth 1 -name 'veles-tracker-backup-*.tar.gz' -mtime +7 -delete
 - Linux с docker и compose v2 (`docker compose version` отвечает).
 - Свободный порт 8300 (WebUI). Фасад наружу не публикуется (порт только внутри
   compose-сети).
+- TLS (опционально): профиль `--profile tls` - reverse-proxy caddy с авто-HTTPS;
+  нужны открытые 80/443 и домен, указывающий на сервер (см. «TLS (corporate)»).
 - Диск ≥5 ГБ (минимум preflight); образ фасада с embedding-моделью тяжёлый -
   закладывайте 10+ ГБ. RAM ≥4 ГБ.
 - Сеть: docker-реестры (ghcr.io) при первой установке; HuggingFace при первом
@@ -86,7 +88,8 @@ find "$HOME" -maxdepth 1 -name 'veles-tracker-backup-*.tar.gz' -mtime +7 -delete
 - **Сеть.** Фасад не публикуется наружу: он доступен только внутри compose-сети
   (`http://veles-facade:8400`), наружу открыт только Open WebUI. Пользователи в базу
   попадают через WebUI; прямых ходов к фасаду из сети нет. Кликабельные ссылки на
-  источники (`/v1/source/...`) требуют reverse-proxy перед фасадом - тема K6.
+  источники (`/v1/source/...`) открываются браузером через reverse-proxy caddy -
+  включается TLS-профилем (см. «TLS (corporate)»).
 - **Личность.** По умолчанию `jwt`: Open WebUI подписывает пользователя
   (`VELES_IDENTITY_JWT_SECRET`, тот же секрет отдаётся WebUI), фасад проверяет подпись.
   Режим `headers` включается только явно (`--identity-headers`) - заголовкам можно
@@ -100,6 +103,31 @@ find "$HOME" -maxdepth 1 -name 'veles-tracker-backup-*.tar.gz' -mtime +7 -delete
   `VELES_IDENTITY_JWT_SECRET` генерируются установщиком (`openssl rand -hex 32`) и
   хранятся только в `.env` (chmod 600). `VELES_LINK_SECRET` - подписанные ссылки на
   источники, генерится всегда.
+
+## TLS (corporate)
+
+Корпоративный контур снаружи ходит по HTTPS. Для этого в ките есть опциональный
+reverse-proxy caddy (авто-выпуск и продление сертификатов, Let's Encrypt) отдельным
+compose-профилем: `--profile tls`. Наружу открываются только 80/443 самого caddy;
+фасад и WebUI остаются внутри compose-сети.
+
+```bash
+cd deploy/kit
+cp caddy/Caddyfile.example caddy/Caddyfile
+# в .env: VELES_TLS_DOMAIN=veles.example.com   (домен указывает на этот сервер)
+#         VELES_WEBUI_BIND=127.0.0.1           (наружу хоста - только caddy)
+docker compose --profile tls up -d caddy
+```
+
+- Маршрутизация: `/v1/*` и `/tracker*` (API и HTML-страницы фасада - по ним браузер
+  открывает источники из цитат) идут на veles-facade, остальное - в Open WebUI.
+- Сертификат выпускается автоматически (ACME HTTP-01 через порт 80), хранится в
+  `data/caddy` и переживает перезапуск. Домен обязан реально указывать на сервер
+  и иметь открытый 80-й порт.
+- `VELES_PUBLIC_URL` в `.env` поставьте `https://<домен>` - подписанные ссылки в
+  цитатах будут вести на домен, а не на внутренний адрес.
+- Без TLS-профиля установка работает как раньше: WebUI на 8300, caddy не запускается.
+- Проверка конфигурации без запуска: `docker compose --profile tls config`.
 
 ## После установки
 
@@ -173,6 +201,7 @@ deploy/kit/
   install.sh uninstall.sh verify-install.sh   # установка, снятие, самопроверка
   make-kit.sh                                 # сборка архива из git HEAD
   docker-compose.yml Dockerfile Dockerfile.bridge
+  caddy/Caddyfile.example                     # шаблон reverse-proxy TLS (профиль tls)
   .env.example                                # все переменные с комментариями
   lib/common.sh                               # общие функции
   windows/install.ps1 windows/uninstall.ps1   # Windows-профиль
