@@ -379,6 +379,69 @@ def test_quota_size_413(kb_env, monkeypatch) -> None:
     assert not (uploads_root() / user_dir("") / "большой.txt").exists()
 
 
+# ------------------------------------------- кап размера запроса (P1 ревью K4)
+
+
+def test_upload_content_length_cap_413_before_read(kb_env, monkeypatch) -> None:
+    """P1 ревью K4: Content-Length больше жёсткого капа VELES_UPLOAD_MAX_MB -
+    413 ДО чтения тела (точная квота и парсер форм не вызываются), L0 и джобов
+    нет; файл в пределах капа проходит."""
+    monkeypatch.setenv("VELES_UPLOAD_MAX_MB", "1")
+    client = make_static_client(kb_env["bundle"])
+    big = b"x" * (1536 * 1024)  # 1.5 МБ > капа 1 МБ
+    r = client.post("/v1/documents", files={"file": ("большой.txt", big, "text/plain")})
+    assert r.status_code == 413
+    assert "капа" in r.json()["detail"] and "VELES_UPLOAD_MAX_MB" in r.json()["detail"]
+    assert not (uploads_root() / user_dir("") / "большой.txt").exists()
+    assert client.get("/v1/documents/jobs").json()["jobs"] == []
+
+    r2 = client.post("/v1/documents",
+                     files={"file": ("небольшой.txt", "небольшой текст".encode("utf-8"),
+                                     "text/plain")})
+    assert r2.status_code == 202
+
+
+def test_upload_content_length_fake_header_413(kb_env, monkeypatch) -> None:
+    """P1: фейковый Content-Length больше капа при крошечном теле - 413 до
+    чтения: заголовок проверяется раньше парсера формы."""
+    monkeypatch.setenv("VELES_UPLOAD_MAX_MB", "1")
+    client = make_static_client(kb_env["bundle"])
+    r = client.post(
+        "/v1/documents",
+        files={"file": ("хитрый.txt", b"tiny", "text/plain")},
+        headers={"content-length": str(10 * 1024 * 1024)},
+    )
+    assert r.status_code == 413
+    assert "капа" in r.json()["detail"]
+    assert not (uploads_root() / user_dir("") / "хитрый.txt").exists()
+
+
+def test_upload_content_length_quota_remainder_413(kb_env, monkeypatch) -> None:
+    """P1: Content-Length больше свободного остатка квоты (с запасом на
+    перезапись крупнейшего своего L0) - 413 до чтения; меньший размер доходит
+    до точной проверки check_quota."""
+    monkeypatch.setenv("VELES_QUOTA_MB", "1")
+    client = make_static_client(kb_env["bundle"])
+    first = client.post("/v1/documents",
+                        files={"file": ("часть.txt", b"x" * (600 * 1024), "text/plain")})
+    assert first.status_code == 202
+    assert wait_done(client, first.json()["job_id"])["status"] == "done"
+
+    # 1.2 МБ > остаток 0.4 МБ + запас на перезапись 0.6 МБ - ранний отказ
+    second = client.post("/v1/documents",
+                         files={"file": ("сверх.txt", b"x" * (1200 * 1024), "text/plain")})
+    assert second.status_code == 413
+    assert "остатка" in second.json()["detail"]
+    assert not (uploads_root() / user_dir("") / "сверх.txt").exists()
+
+    # 0.5 МБ: ранний гейт проходит (запас на перезапись), точная проверка
+    # check_quota отсекает - прежняя семантика 413 сохранена
+    third = client.post("/v1/documents",
+                        files={"file": ("впритык.txt", b"x" * (500 * 1024), "text/plain")})
+    assert third.status_code == 413
+    assert "занято" in third.json()["detail"]
+
+
 # ------------------------------------------------- ревизии, no-op, перезапись
 
 

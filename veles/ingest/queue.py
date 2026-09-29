@@ -132,6 +132,50 @@ def check_quota(user_directory: str, incoming_bytes: int, replacing: bool) -> No
         )
 
 
+def upload_max_bytes() -> int:
+    """Жёсткий кап размера одной загрузки, байт (VELES_UPLOAD_MAX_MB, дефолт 50;
+    0 = без капа). Мусор в env -> дефолт. Проверяется по Content-Length ДО чтения
+    тела (P1 ревью K4): заведомо неподъёмный запрос не должен подниматься в RAM."""
+    default_mb = 50
+
+    def _default() -> int:
+        return default_mb * 1024 * 1024
+
+    raw = os.environ.get("VELES_UPLOAD_MAX_MB", "").strip()
+    if not raw:
+        return _default()
+    try:
+        mb = max(0, int(raw))
+    except ValueError:
+        return _default()
+    return mb * 1024 * 1024 if mb else 0
+
+
+def quota_free_bytes(user_directory: str) -> int | None:
+    """Свободный остаток квоты размера, байт; None - лимит не задан (0).
+
+    Оценка с запасом на перезапись: к остатку добавлен размер крупнейшего
+    существующего L0-файла пользователя - если даже перезаписать его, больше
+    не влезет. Точная проверка всё равно в check_quota после разбора тела
+    (ранний гейт не знает имя файла)."""
+    docs_limit, mb_limit = quota_limits()
+    if not mb_limit:
+        return None
+    directory = uploads_root() / user_directory
+    used, largest = 0, 0
+    if directory.is_dir():
+        for p in directory.iterdir():
+            if not p.is_file():
+                continue
+            try:
+                size = p.stat().st_size
+            except OSError:  # noqa: PERF101 - оценка не должна падать на гонке fs
+                continue
+            used += size
+            largest = max(largest, size)
+    return max(0, mb_limit * 1024 * 1024 - used) + largest
+
+
 def safe_filename(name: str) -> str | None:
     """Валидация имени файла загрузки: плоское имя без обхода каталогов."""
     name = (name or "").strip()

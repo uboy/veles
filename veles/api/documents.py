@@ -19,14 +19,18 @@ import threading
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from ..ingest.queue import (
     ALLOWED_EXTENSIONS,
     IngestQueue,
     QuotaExceeded,
     check_quota,
+    quota_free_bytes,
+    quota_limits,
     safe_filename,
     slugify_title,
+    upload_max_bytes,
     uploads_root,
     user_dir,
 )
@@ -92,12 +96,51 @@ async def upload_document(
 ):
     """Загрузка документа: multipart (file [+ title, access_groups]) или JSON
     ({text, title}). Форматы первого шага: txt/md/pdf. Квоты проверяются ДО
-    постановки в очередь (документы - 403, размер L0 - 413)."""
+    постановки в очередь (документы - 403, размер L0 - 413).
+
+    P1 ревью K4: Content-Length проверяется ДО разбора тела против жёсткого
+    капа VELES_UPLOAD_MAX_MB и против свободного остатка квоты (грубо, без
+    имени файла - с запасом на перезапись крупнейшего своего L0) - тело
+    заведомо неподъёмного запроса не читается вовсе. Остаточный риск: без
+    Content-Length (chunked) и само тело до капа всё ещё буферизуется
+    парсером multipart - полный стриминг с капом на лету, отдельная задача.
+    Запись L0 - через run_in_threadpool, не блокируя событийный цикл.
+    """
     ident = _identity(request, authorization)
     state = _ctx(request)
     queue = _queue(request)
 
     content_type = (request.headers.get("content-type") or "").lower()
+    if "multipart/form-data" not in content_type and "application/json" not in content_type:
+        raise HTTPException(
+            status_code=415,
+            detail="ожидается multipart/form-data (файл) или application/json (текст)",
+        )
+
+    # ранний гейт размера: заголовок есть почти всегда (клиенты ставят его
+    # сами); chunked без Content-Length проходит мимо - см. остаточный риск
+    declared = (request.headers.get("content-length") or "").strip()
+    directory = user_dir(ident.user_id)
+    if declared.isdigit():
+        length = int(declared)
+        max_bytes = upload_max_bytes()
+        if max_bytes and length > max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"размер запроса {length // (1024 * 1024)} МБ больше "
+                    f"жёсткого капа {max_bytes // (1024 * 1024)} МБ "
+                    "(VELES_UPLOAD_MAX_MB) - загрузка отклонена до чтения",
+            )
+        free = quota_free_bytes(directory)
+        if free is not None and length > free:
+            _, mb_limit = quota_limits()
+            raise HTTPException(
+                status_code=413,
+                detail=f"размер запроса {length // (1024 * 1024)} МБ больше "
+                    f"свободного остатка квоты ({mb_limit} МБ, "
+                    "VELES_QUOTA_MB) - загрузка отклонена до чтения",
+            )
+
     raw = b""
     filename = ""
     title = ""
@@ -120,11 +163,6 @@ async def upload_document(
             )
         raw = body.text.encode("utf-8")
         title = body.title.strip()
-    else:
-        raise HTTPException(
-            status_code=415,
-            detail="ожидается multipart/form-data (файл) или application/json (текст)",
-        )
 
     if "multipart/form-data" in content_type:
         if not raw:
@@ -152,8 +190,13 @@ async def upload_document(
     except QuotaExceeded as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
-    l0_path.parent.mkdir(parents=True, exist_ok=True)
-    l0_path.write_bytes(raw)
+    def _write_l0() -> None:
+        # P1 ревью K4: запись в тредпул - синхронный write на событийном цикле
+        # блокировал бы все остальные запросы на время диска
+        l0_path.parent.mkdir(parents=True, exist_ok=True)
+        l0_path.write_bytes(raw)
+
+    await run_in_threadpool(_write_l0)
 
     job = queue.submit(
         user_id=ident.user_id,
