@@ -75,7 +75,53 @@
 
 | Находка | Коммит | Чем доказано |
 |---|---|---|
-| (заполняется после фиксов) | | |
+| P0 source/asset/stats без ACL | `927ade6` | `source_view`/`asset_file` сверяют группы манифеста с личностью (`_visible_by_groups`): чужому 404, неотличимый от несуществующего; sig-ссылка (ident None) групповой проверке не подлежит — sig скоупит документ+узел; админ/`*`/bearer-владелец видят всё как раньше (static не сломан). `knowledge_stats` фильтрует узлы тем же фильтром, totals.nodes — по видимым. Тест `test_acl_other_user_invisible_everywhere` расширен на source (petrov 404), asset (petrov 404, живой актив в doc_dir), stats (у petrov документа нет, totals.nodes=0; у ivanov/boss/owner есть), sig-ссылка 200 / битая 401; все прежние тесты source (test_source_links, test_identity) зелёные |
+| P1 размер запроса до чтения | `2a6cc1d` | Ранний гейт Content-Length ДО разбора тела: жёсткий кап `VELES_UPLOAD_MAX_MB` (env, дефолт 50 МБ, 0 = снят) и грубая проверка свободного остатка квоты (с запасом на перезапись крупнейшего своего L0 — ложных 413 нет, точная проверка в check_quota осталась) → 413 до чтения; запись L0 через `run_in_threadpool`. Остаточный риск задокументирован в докстринге (тело до капа буферизуется парсером, chunked без CL проходит мимо гейта; полный стриминг — отдельная задача). Тесты: `test_upload_content_length_cap_413_before_read` (413, L0 и джобов нет; файл в пределах капа проходит), `test_upload_content_length_fake_header_413` (фейковый CL 10 МБ при крошечном теле → 413 до чтения), `test_upload_content_length_quota_remainder_413` (ранний отказ по остатку; впритык — прежняя семантика 413 от check_quota) |
+| P2a TOCTOU квоты | `8fa2fc6` | `user_quota_lock` — per-user `threading.Lock`; check_quota+запись L0 в documents.py под одним замком (в тредпуле, событийный цикл не блокируется). Тест `test_quota_check_and_write_atomic_per_user`: два потока через барьер, квота 1 документ — итог `[ok, quota]`, файл один |
+| P2b list_jobs boot-id | `8fa2fc6` | `list_jobs` применяет семантику lookup: чужой boot_id в queued/running показывается failed «сервис перезапущен» и персистентно пишется в журнал; свой живой queued не трогается. Тест `test_list_jobs_marks_stale_boot_failed` (три поколения очереди) |
+| P2c L0 упавшего джоба | `8fa2fc6` | `_discard_l0`: ошибка парса → L0 удалён (квота не съедается), неудача удаления → WARN в лог без падения воркера. Тесты: `test_pdf_job_fails_clean_without_docling` расширен (после failed файла «документ.pdf» в uploads нет), `test_discard_l0_warns_on_unlink_failure` (unlink поднял OSError → только WARN-запись в лог) |
+| P2d python-multipart | `da57b78` | `pyproject.toml`: `>=0.0.9` → `>=0.0.18` (DoS-фиксы; в venv стенд стоит 0.0.32 — совместимо) |
+| P2e арифметика бейслайна | `da57b78` | В eval фазы «vs 116» заменено на базу d290963 = 124 passed, 124+15=139; проверено прогоном архива базового коммита на стенд: `pytest tests -q` → `124 passed, 1 warning in 6.94s` |
+
+Вывод полного сета (стенд, `/tmp/veles-k4-fix`, `git archive HEAD`):
+
+```
+$ cd /tmp/veles-k4-fix && CUDA_VISIBLE_DEVICES= <server-home>/veles-venv/bin/python -m pytest tests -q
+145 passed, 1 warning in 7.70s        (было 139, +6 новых тестов)
+```
+
+Локально (Windows, Python 3.11): `144 passed, 1 skipped, 1 warning in 41.78s`
+(skip и warning — унаследованные, не из фиксов: PermissionError-флап K2-теста
+трекера, задокументирован в ревью K2).
+
+Мини-E2E ACL на тест-инстансе стенд (`127.0.0.1:18410`, `VELES_IDENTITY_MODE=headers`,
+`VELES_DATA=/tmp/veles-k4-fix-e2e/data`, real-модель e5-small, сид 1 документ +
+индекс numpy-flat; живой фасад, не TestClient):
+
+```
+healthz: 200 ok
+upload: {"job_id": "2b525ecc…", "status": "queued", "document_id": "ivanov@corp.ru/Парольная_политика.md"}
+job: {"status": "done", "action": "created", "revision_id": "r1", "nodes": 2, …}
+petrov: source 404 asset 404 stats documents: [] totals: {'documents': 0, 'nodes': 0, 'superseded_nodes': 0}
+ivanov: source 200 asset 200 stats ['ivanov@corp.ru/Парольная_политика.md']
+boss:   source 200 asset 200 stats ['seed/politika.txt', 'ivanov@corp.ru/Парольная_политика.md']
+owner:  source 200 asset 200 stats ['seed/politika.txt', 'ivanov@corp.ru/Парольная_политика.md']
+sig-link (без заголовков): source 200
+sig-link битая: 401
+E2E ACL: OK
+```
+
+Чистка стенд: тест-инстанс убит (порт 18410 свободен), `/tmp/veles-k4-fix` и
+`/tmp/veles-k4-fix-e2e` удалены, `pgrep -af 'veles serve'` находит только прод
+112960 (`--port 8400`, работал до прогона и не тронут).
+
+## Замечания вне фиксов
+
+- Гейт квоты в раннем отказе намеренно грубый (без имени файла остаток взят с
+  запасом на перезапись крупнейшего своего L0): ложных отказов нет, точную
+  семантику держит check_quota после разбора — покрыто тестом «впритык».
+- `totals.superseded_nodes` в stats остался глобальным счётчиком индекса
+  (число, не контент); ACL-фильтр применён к документам/узлам и totals.nodes.
 
 ## Отложено (за рамками этого ревью, решение владельца)
 
