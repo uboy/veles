@@ -350,8 +350,13 @@ install_lite() {
     "$PY" -m venv "$IN_DIR/.venv"
     "$IN_DIR/.venv/bin/pip" install -q -U pip
     if [ "$DEMO" = 1 ]; then
-        # демо-вопросу нужен эмбеддер (sentence-transformers/torch)
-        info "ставлю veles + embedding-зависимости для демо (torch - самая долгая часть)"
+        # демо-вопросу нужен эмбеддер (sentence-transformers/torch);
+        # torch ставим CPU-сборкой: PyPI-вариант тянет CUDA-библиотеки (~5 ГБ),
+        # которые на чистой машине демо не нужны. Не скачался - PyPI fallback.
+        info "ставлю veles + embedding-зависимости для демо (CPU-torch + sentence-transformers)"
+        if ! "$IN_DIR/.venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu; then
+            warn "CPU-torch с download.pytorch.org не скачался - torch придёт из PyPI (с CUDA, крупнее на ~5 ГБ)"
+        fi
         "$IN_DIR/.venv/bin/pip" install -q -e "$REPO_DIR[st]"
     else
         "$IN_DIR/.venv/bin/pip" install -q -e "$REPO_DIR"

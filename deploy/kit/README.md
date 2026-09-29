@@ -12,7 +12,8 @@ FAQ поддержки) с готовым мини-индексом. Реаль�
 ```bash
 tar xzf veles-deploy-kit-<версия>.tar.gz
 cd veles-deploy-kit-<версия>/deploy/kit
-./install.sh --demo --yes          # профиль lite (CLI); ~1-3 ГБ загрузок: torch + модель
+./install.sh --demo --yes          # профиль lite (CLI); сеть: pip (CPU-torch, ~200 МБ)
+                                   # + модель e5-small с HuggingFace (~130 МБ)
 ./.venv/bin/veles ask "Сколько дней отпуска положено сотруднику?"
 ```
 
@@ -28,8 +29,9 @@ cd veles-deploy-kit-<версия>/deploy/kit
 Важно знать: индекс несёт вектора документов, но для эмбеддинга ВОПРОСА модель
 `intfloat/multilingual-e5-small` нужна и на машине демо - при установке она
 скачивается с HuggingFace (~130 МБ, кеш `~/.cache/huggingface`); без сети
-на huggingface.co демо-вопрос не заработает. Диск для lite-демо: от 4 ГБ
-(torch в venv).
+на huggingface.co демо-вопрос не заработает. Torch ставится CPU-сборкой
+(download.pytorch.org); если тот недоступен, pip уйдёт на PyPI и поставит
+CUDA-вариант (крупнее на ~5 ГБ). Диск для lite-демо: от 4 ГБ.
 
 Удаление демо целиком: `./uninstall.sh --purge-data` (снесёт данные, venv и .env;
 спросит дважды без `--yes`).
@@ -109,10 +111,10 @@ find "$HOME" -maxdepth 1 -name 'veles-tracker-backup-*.tar.gz' -mtime +7 -delete
 **lite**
 
 - Linux/macOS (на Windows - `windows/install.ps1`), python 3.11+, bash 4+.
-- Диск ≥1 ГБ (демо: ≥4 ГБ - sentence-transformers/torch в venv), портов не
-  занимает.
-- Сеть: pip при установке; демо дополнительно тянет модель e5-small
-  (~130 МБ) с HuggingFace при установке/первом вопросе.
+- Диск ≥1 ГБ (демо: ≥4 ГБ - CPU-torch и sentence-transformers в venv),
+  портов не занимает.
+- Сеть: pip при установке (демо ставит CPU-torch с download.pytorch.org
+  и модель e5-small ~130 МБ с HuggingFace).
 
 Все профили: ключ LLM спрашивается при установке и пишется только в локальный `.env`
 (chmod 600). В архив ключи не встраиваются никогда.
