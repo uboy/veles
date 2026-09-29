@@ -1,0 +1,600 @@
+{
+ "mode": "live",
+ "params": {
+  "golden": "<server-home>/proj/veles-bench/veles/evals/synth-bench/golden.jsonl",
+  "cache": "<server-home>/proj/veles-bench/veles/evals/synth-bench/retrieval-cache.json",
+  "live": true,
+  "top_k": 5,
+  "rrf_k": null,
+  "w_dense": 1.0,
+  "w_lex": 1.0,
+  "depth": null,
+  "codex_boost": null,
+  "filter_junk": false,
+  "dedupe": false,
+  "out_json": "/tmp/k14/bench-golden-after.json"
+ },
+ "total": {
+  "n": 57,
+  "r_at_5": 0.8947,
+  "top1": 0.7719,
+  "mrr": 0.8275,
+  "p_at_5": 0.6351
+ },
+ "by_provenance": {
+  "auto": {
+   "n": 31,
+   "r_at_5": 0.871,
+   "top1": 0.6452,
+   "mrr": 0.7473,
+   "p_at_5": 0.5871
+  },
+  "manual": {
+   "n": 3,
+   "r_at_5": 1.0,
+   "top1": 1.0,
+   "mrr": 1.0,
+   "p_at_5": 0.7333
+  },
+  "miniqa": {
+   "n": 10,
+   "r_at_5": 1.0,
+   "top1": 1.0,
+   "mrr": 1.0,
+   "p_at_5": 0.54
+  },
+  "rrncb": {
+   "n": 13,
+   "r_at_5": 0.8462,
+   "top1": 0.8462,
+   "mrr": 0.8462,
+   "p_at_5": 0.8
+  }
+ },
+ "by_domain": {
+  "rrncb": {
+   "n": 16,
+   "r_at_5": 0.6875,
+   "top1": 0.625,
+   "mrr": 0.6562,
+   "p_at_5": 0.65
+  },
+  "кодексы": {
+   "n": 20,
+   "r_at_5": 0.95,
+   "top1": 0.85,
+   "mrr": 0.8917,
+   "p_at_5": 0.81
+  },
+  "лекции": {
+   "n": 21,
+   "r_at_5": 1.0,
+   "top1": 0.8095,
+   "mrr": 0.8968,
+   "p_at_5": 0.4571
+  }
+ },
+ "misses": [
+  "k11-006",
+  "k11-013",
+  "k11-038",
+  "k11-039",
+  "k11-044",
+  "k11-054"
+ ],
+ "rows": [
+  {
+   "id": "k11-001",
+   "provenance": "rrncb",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-002",
+   "provenance": "rrncb",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-003",
+   "provenance": "rrncb",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-004",
+   "provenance": "rrncb",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.4
+  },
+  {
+   "id": "k11-005",
+   "provenance": "rrncb",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-006",
+   "provenance": "rrncb",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-007",
+   "provenance": "rrncb",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-008",
+   "provenance": "rrncb",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-009",
+   "provenance": "rrncb",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-010",
+   "provenance": "rrncb",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-011",
+   "provenance": "rrncb",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-012",
+   "provenance": "rrncb",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-013",
+   "provenance": "rrncb",
+   "domain": "кодексы",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-014",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-015",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.4
+  },
+  {
+   "id": "k11-016",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-017",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.6
+  },
+  {
+   "id": "k11-018",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.4
+  },
+  {
+   "id": "k11-019",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.6
+  },
+  {
+   "id": "k11-020",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.6
+  },
+  {
+   "id": "k11-021",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-022",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.6
+  },
+  {
+   "id": "k11-023",
+   "provenance": "miniqa",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-024",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-025",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-026",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-027",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 0.6
+  },
+  {
+   "id": "k11-028",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-029",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-030",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-031",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.4
+  },
+  {
+   "id": "k11-032",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.3333333333333333,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-033",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-034",
+   "provenance": "auto",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-035",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-036",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-037",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-038",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.4
+  },
+  {
+   "id": "k11-039",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-040",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.4
+  },
+  {
+   "id": "k11-041",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-042",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-043",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-044",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-045",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-046",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.6
+  },
+  {
+   "id": "k11-047",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.5,
+   "p5": 0.6
+  },
+  {
+   "id": "k11-048",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-049",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 0,
+   "rr": 0.3333333333333333,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-050",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.8
+  },
+  {
+   "id": "k11-051",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.4
+  },
+  {
+   "id": "k11-052",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-053",
+   "provenance": "auto",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-054",
+   "provenance": "auto",
+   "domain": "rrncb",
+   "hit": 0,
+   "top1": 0,
+   "rr": 0.0,
+   "p5": 0.2
+  },
+  {
+   "id": "k11-055",
+   "provenance": "manual",
+   "domain": "rrncb",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-056",
+   "provenance": "manual",
+   "domain": "кодексы",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 1.0
+  },
+  {
+   "id": "k11-057",
+   "provenance": "manual",
+   "domain": "лекции",
+   "hit": 1,
+   "top1": 1,
+   "rr": 1.0,
+   "p5": 0.2
+  }
+ ]
+}

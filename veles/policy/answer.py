@@ -101,12 +101,16 @@ def _conflict_candidates(evidence: list[Evidence]) -> list[dict]:
 
 def decide(
     evidence: list[Evidence],
-    threshold: float = ABSTAIN_CONFIDENCE,
+    threshold: float | None = None,
     query_identifiers: list[str] | None = None,
     known_identifiers: set[str] | None = None,
     codex_refs: list[str] | None = None,
     doc_titles: set[str] | None = None,
 ) -> AnswerDecision:
+    # ревью K14: порог читается в момент вызова (не дефолтом сигнатуры) -
+    # перекалибровка ABSTAIN_CONFIDENCE не требует переимпорта модуля
+    if threshold is None:
+        threshold = ABSTAIN_CONFIDENCE
     """Identifier-grounding проверяется ПЕРВЫМ (детерминированный сигнал):
     вопрос цитирует номер документа или кодекс, которых нет в корпусе -> abstain
     независимо от скоров (Ф2: скор-гейт слеп на ближний домен, FAR=0.9; Ф3:

@@ -192,3 +192,24 @@ def test_hybrid_search_dedupe_channels_single_contribution() -> None:
     assert dup_fixed.rrf == pytest.approx(dup_broken.rrf - 1.0 / (RRF_K + second))
     assert dup_fixed.rrf < dup_broken.rrf
     assert {e.node_version_id for e in fixed} == {e.node_version_id for e in broken}
+
+
+def test_dedupe_channels_default_true_noop_on_clean_index() -> None:
+    """K14: дефолт DEDUPE_CHANNELS=True (план K12 - включить после пересборки).
+    На чистом индексе (каждый узел в канале один раз) дедуп - no-op: выдача с
+    дефолтом (None) совпадает с явным False и по порядку, и по скорам."""
+    import veles.config as config
+
+    assert config.DEDUPE_CHANNELS is True
+    nodes = {
+        "a": _meta("Документ А", "текст про соосность блоков", "docs/a.pdf"),
+        "b": _meta("Документ Б", "текст про снижение потерь", "docs/b.pdf"),
+        "c": _meta("Документ В", "совершенно посторонний текст", "docs/c.pdf"),
+    }
+    bundle = _bundle(nodes, bm25_adds=1)  # чистый индекс: без дублей
+    q = "текст про соосность снижение"
+    clean_off = hybrid_search(bundle, _qvec(), q, top_k=3, dedupe_channels=False)
+    default = hybrid_search(bundle, _qvec(), q, top_k=3)  # None = дефолт config
+    assert [(e.node_version_id, e.rrf) for e in default] == [
+        (e.node_version_id, e.rrf) for e in clean_off
+    ]

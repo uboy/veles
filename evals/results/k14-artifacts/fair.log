@@ -1,0 +1,70 @@
+2026-09-29T21:50:22+03:00 bench golden-k14 (ремап expected) START
+
+# retrieval-bench [live] (rrf_k=None, w=(1.0,1.0), depth=None, codex_boost=None, filter_junk=False, dedupe=False)
+golden: 72 вопросов, answerable 57
+**Итого**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.983 | 0.860 | 0.915 | 0.635 |
+
+**По provenance**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.983 | 0.860 | 0.915 | 0.635 |
+| auto | 31 | 1.000 | 0.774 | 0.876 | 0.587 |
+| manual | 3 | 1.000 | 1.000 | 1.000 | 0.733 |
+| miniqa | 10 | 1.000 | 1.000 | 1.000 | 0.540 |
+| rrncb | 13 | 0.923 | 0.923 | 0.923 | 0.800 |
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.983 | 0.860 | 0.915 | 0.635 |
+| rrncb | 16 | 1.000 | 0.938 | 0.969 | 0.650 |
+| кодексы | 20 | 0.950 | 0.850 | 0.892 | 0.810 |
+| лекции | 21 | 1.000 | 0.809 | 0.897 | 0.457 |
+
+промахи R@5 (1): k11-013
+метрики: /tmp/k14/bench-golden-k14.json
+2026-09-29T21:50:46+03:00 rrncb50 регенерация на новом индексе (seed 12) START
+  20/50 (попыток 45)
+  30/50 (попыток 66)
+  40/50 (попыток 88)
+  50/50 (попыток 111)
+выборка: 50 вопросов, покрытие 0.45 (50/111) -> rrncb50-k14.jsonl
+2026-09-29T21:51:19+03:00 bench rrncb50-k14 START
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 1.000 | 0.600 | 0.724 | 0.788 |
+
+**По provenance**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 1.000 | 0.600 | 0.724 | 0.788 |
+| rrncb50 | 50 | 1.000 | 0.600 | 0.724 | 0.788 |
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 1.000 | 0.600 | 0.724 | 0.788 |
+| rrncb | 14 | 1.000 | 0.500 | 0.644 | 0.714 |
+| кодексы | 36 | 1.000 | 0.639 | 0.755 | 0.817 |
+
+метрики: /tmp/k14/bench-rrncb50-k14.json
+2026-09-29T21:51:42+03:00 freeze retrieval-cache (golden 72, новый индекс) START
+  20/72
+  40/72
+  60/72
+кэш: retrieval-cache.json (567 КБ); answerable 57, expected-node в top-5: 51/57
+решение по кэшу: < 1 МБ - коммитится в git (evals/synth-bench/)
+2026-09-29T21:52:08+03:00 freeze cbc-cache START
+  File "<server-home>/proj/veles-bench/veles/evals/synth-bench/freeze_retrieval.py", line 74, in main
+    questions[entry["id"]] = {"question": entry["question"], "fragments": frags}
+              ~~~~~^^^^^^
+KeyError: 'id'
+2026-09-29T21:52:19+03:00 FAIR-BENCH BLOCK DONE

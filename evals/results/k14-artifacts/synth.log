@@ -1,0 +1,33 @@
+cbc-id записан 6
+2026-09-29T21:53:16+03:00 freeze cbc (с id) START
+индекс: 127498 узлов
+кэш: retrieval-cache-cbc.json (34 КБ); answerable 2, expected-node в top-5: 0/2
+решение по кэшу: < 1 МБ - коммитится в git (evals/synth-bench/)
+2026-09-29T21:53:28+03:00 synth-bench GLM 72 вопроса START
+[68/72]  ok k11-068 abst=True lat=6.4s len=714 finish=stop
+[69/72]  ok k11-069 abst=True lat=7.5s len=529 finish=stop
+[70/72]  ok k11-070 abst=True lat=7.1s len=496 finish=stop
+[71/72]  ok k11-071 abst=True lat=15.0s len=1158 finish=stop
+[72/72]  ok k11-072 abst=True lat=8.4s len=575 finish=stop
+ответы: answers-glm-k14.json; ошибок: 0
+2026-09-29T22:05:06+03:00 judge GLM (57 answerable) START
+сужу answers-glm-k14.json...
+  answers-glm-k14.json: 10/72 (судья вызовов: 10)
+  answers-glm-k14.json: 20/72 (судья вызовов: 20)
+  answers-glm-k14.json: 30/72 (судья вызовов: 30)
+  answers-glm-k14.json: 40/72 (судья вызовов: 40)
+  answers-glm-k14.json: 50/72 (судья вызовов: 50)
+  answers-glm-k14.json: 60/72 (судья вызовов: 57)
+  answers-glm-k14.json: 70/72 (судья вызовов: 57)
+  answers-glm-k14.json: 72/72 (судья вызовов: 57)
+| MODEL | FAITH | CITE | COV | ABST | RU | LAT, c | N | TOK/отв |
+|---|---|---|---|---|---|---|---|---|
+| glm-5.3-flash | 1.91 | 1.98 | 2 | 93.3% | 1.96 | 9.7 | 72 | 1164.0 |
+
+судьи вердикты: judged-k14.json
+2026-09-29T22:22:21+03:00 cbc GLM (6 вопросов) START
+[4/6]  ok cbc-004 abst=True lat=9.7s len=635 finish=stop
+[5/6]  ok cbc-005 abst=True lat=8.7s len=718 finish=stop
+[6/6]  ok cbc-006 abst=True lat=12.6s len=843 finish=stop
+ответы: answers-cbc-k14.json; ошибок: 0
+2026-09-29T22:23:18+03:00 SYNTH CHAIN DONE
