@@ -240,7 +240,7 @@ def upsert_document(bundle, doc: CanonicalDocument, outcome, embedder) -> Upsert
     for node in doc.nodes:
         if node.node_type == "root":  # как build_index: корень в индекс не идёт
             continue
-        identifiers |= extract_identifiers(node.text)
+        identifiers |= set(extract_identifiers(node.text))
         prefix = " > ".join(node.heading_path)
         # детерминированный префикс пути заголовков (инвариант 7 / H4) - тот же,
         # что в build_index, иначе после пересборки ранжирование меняется

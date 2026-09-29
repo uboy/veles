@@ -74,6 +74,13 @@ def apply_overlay(bundle, index_dir: Path) -> None:
     data = read_overlay(index_dir)
     if data is None:
         return
+    try:
+        _apply_checked(bundle, data)
+    except Exception as e:  # noqa: BLE001 - оверлей не должен ронять сервис
+        logger.warning("оверлей %s не применён: %s", overlay_path(index_dir), e)
+
+
+def _apply_checked(bundle, data: dict) -> None:
     meta = data["meta"]
     if meta.get("embed_model") != EMBED_MODEL:
         logger.warning(
@@ -129,12 +136,20 @@ def append_overlay(index_dir: Path, new_nodes: dict, patches: dict,
         else:
             all_patches[nid] = patch
 
-    all_ids = (old or {}).get("ids") or []
-    all_matrix = (old or {}).get("matrix")
-    if all_ids and all_matrix is not None and len(all_ids) == len(all_matrix):
-        matrix = np.vstack([all_matrix, matrix.astype(np.float32)])
-        ids = all_ids + list(ids)
-        bm25_all = (old_meta.get("bm25") or []) + [list(p) for p in bm25_pairs]
+    old_ids = (old or {}).get("ids") or []
+    old_matrix = (old or {}).get("matrix")
+    old_consistent = bool(old_ids) and old_matrix is not None and len(old_ids) == len(old_matrix)
+    old_bm25 = old_meta.get("bm25") or []
+    if len(matrix) == 0:
+        # дельта без индексируемых узлов (например документ из одного корня):
+        # мета/патчи выше всё равно записываются, векторы не меняются
+        ids = list(old_ids) if old_consistent else []
+        matrix = old_matrix if old_consistent else np.zeros((0, 1), dtype=np.float32)
+        bm25_all = old_bm25 if old_consistent else []
+    elif old_consistent:
+        ids = old_ids + list(ids)
+        matrix = np.vstack([old_matrix, matrix.astype(np.float32)])
+        bm25_all = old_bm25 + [list(p) for p in bm25_pairs]
     else:
         # старого оверлея не было/бит - начинаем с этой дельты (предупреждение
         # уже отдал read_overlay, если файл был)
@@ -148,7 +163,8 @@ def append_overlay(index_dir: Path, new_nodes: dict, patches: dict,
         "bm25": bm25_all,
         "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    tmp = index_dir / (OVERLAY_NAME + f".tmp{os.getpid()}")
+    # tmp-имя обязано кончаться на .npz: np.savez иначе дописывает расширение
+    tmp = index_dir / f"overlay.tmp{os.getpid()}.npz"
     np.savez(
         tmp,
         meta=np.frombuffer(json.dumps(meta, ensure_ascii=False).encode("utf-8"), dtype=np.uint8),
