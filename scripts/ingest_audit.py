@@ -357,7 +357,10 @@ def audit_codex(d: Path) -> dict | None:
     for line in (d / "nodes.jsonl").read_text(encoding="utf-8").splitlines():
         if not line.strip():
             continue
-        node = json.loads(line)
+        try:
+            node = json.loads(line)
+        except ValueError:  # ревью K13 P2: битая строка не валит весь аудит
+            continue
         if node.get("node_type") == "root":
             continue
         text = str(node.get("text") or "")
@@ -402,6 +405,11 @@ def audit_codex(d: Path) -> dict | None:
 def run_audit(args: argparse.Namespace) -> dict:
     data = Path(args.data)
     roots = find_canon_roots(data)
+    if args.index and len(roots) == 1 and roots[0].name != "canonical":
+        # ревью K13 P2: индекс строится из canonical-корня; сверка против
+        # одиночного корня с чужим именем даёт массовые ложные «отсутствует»
+        print("предупреждение: --index с одиночным корнем без имени canonical - "
+              "сверка с индексом даст ложные расхождения", file=sys.stderr)
     state: dict = {"_max_examples": args.max_examples, "_docsum": Counter()}
     index_counts = _count_nodes_in_index(data) if args.index else None
     jobs_counts = _count_nodes_in_jobs(data) if args.jobs else None

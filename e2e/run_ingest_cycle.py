@@ -166,6 +166,19 @@ class Facade:
         self.cwd, self.env = repo, veles_env(data_dir)
 
     def start(self, timeout_s: float = 420) -> None:
+        # ревью K13 P1: pre-flight - порт обязан быть СВОБОДЕН. Если там уже
+        # висит чужой veles-фасад, наш ребёнок умрёт с bind-error, а поллинг
+        # получил бы 200 от чужого инстанса - весь цикл молча прошёл бы по
+        # чужим данным и отрапортовал ЗЕЛЁНЫЙ.
+        try:
+            code, _ = http("GET", f"{self.base}/healthz", timeout=5)
+        except OSError:
+            code = None
+        if code == 200:
+            raise RuntimeError(
+                f"порт {self.base} уже занят отвечающим /healthz - чужой процесс? "
+                "e2e-цикл отменён, чтобы не тестировать чужие данные"
+            )
         self.proc = subprocess.Popen(
             self.cmd, cwd=str(self.cwd), env=self.env,
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
