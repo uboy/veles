@@ -40,6 +40,7 @@ from ..policy.identity import (
 )
 from ..retrieval.retriever import hybrid_search
 from .documents import router as documents_router  # K4: загрузка документов
+from .groups import router as groups_router  # K7: список групп для загрузки
 from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
 from .ratelimit import install_rate_limit
 
@@ -318,6 +319,7 @@ def create_app(
     # K4: контекст для documents-роутера (identity_fn/pipeline_fn лежат в state)
     app.state.veles = state
     app.include_router(documents_router)
+    app.include_router(groups_router)  # K7: GET /v1/groups
 
     def _auth(authorization: str) -> None:
         token = state["token"]

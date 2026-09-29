@@ -91,6 +91,10 @@ def test_resolver_wired_via_http() -> None:
 
 def test_static_resolver_from_env(monkeypatch) -> None:
     monkeypatch.setenv("VELES_ALLOWED_GROUPS", "personal, finance-restricted")
-    assert StaticOwnerResolver.from_env().allowed_groups() == {"personal", "finance-restricted"}
+    groups = StaticOwnerResolver.from_env().allowed_groups()
+    # K7: настроенные группы парсятся из env; all неявен; владелец-админ получает
+    # и все определённые серверные группы (без groups.json - дефолтные три)
+    assert {"personal", "finance-restricted", "on-request", "test-dept"} <= groups
+    assert "all" in groups
     monkeypatch.delenv("VELES_ALLOWED_GROUPS")
     assert "personal" in StaticOwnerResolver.from_env().allowed_groups()

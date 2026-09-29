@@ -1,13 +1,16 @@
 """Роутер загрузки документов пользователем (K4): POST /v1/documents + джобы.
 
-POST /v1/documents        - multipart (file + опциональные title, access_groups)
-                            или JSON {text, title}; создаёт джоб, ответ 202.
+POST /v1/documents        - multipart (file + опциональные title, group,
+                            access_groups) или JSON {text, title, group};
+                            создаёт джоб, ответ 202.
 GET /v1/documents/jobs    - список своих джобов (админ - все).
 GET /v1/documents/jobs/{id} - статус queued/running/done/failed с причиной.
 
 Личность и группы - только через identity фасада (инвариант 5, тот же шов,
 что у query/chat): документ пользователя несёт личную группу user:<uid>,
 поэтому чужие загрузки невидимы в поиске и в статусах джобов; админ видит всё.
+K7: при загрузке можно выбрать серверную группу (group=<id> из GET /v1/groups)
+- документ увидят только члены группы; невалидная группа - 400.
 app.py в этот файл не перекраивался: контекст (identity_fn/pipeline_fn)
 приходит через app.state.
 """
@@ -35,6 +38,7 @@ from ..ingest.queue import (
     user_dir,
     user_quota_lock,
 )
+from ..policy.groups import GROUP_ALL, defined_group_ids, group_exists
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
 
@@ -47,6 +51,9 @@ class TextUpload(BaseModel):
 
     text: str
     title: str = ""
+    # K7: серверная группа для доступа (group=<id> из GET /v1/groups);
+    # пусто - личная user:<uid>, безопасный дефолт K4 сохранён
+    group: str = ""
 
 
 def _ctx(request: Request) -> dict:
@@ -72,10 +79,41 @@ def _queue(request: Request) -> IngestQueue:
     return queue
 
 
-def _document_groups(ident, groups_param: str, identity_mode: str) -> list[str]:
-    """access_groups документа: личная группа пользователя (identity-режимы)
-    или группы владельца (static). Явный access_groups - только админу
-    (инвариант 5: группы не приходят от клиента)."""
+def _ensure_group_exists(group_param: str) -> None:
+    """K7: невалидная группа - 400 СРАЗУ после разбора тела, до квоты и записи
+    L0 (поздняя валидация оставляла бы L0-сироту без джоба и съедала квоту).
+    Группа обязана существовать в конфиге групп (или all - видно всем)."""
+    group_id = group_param.strip()
+    if group_id and not group_exists(group_id):
+        raise HTTPException(
+            status_code=400,
+            detail=f"неизвестная группа: {group_id!r}. Доступные: "
+                f"{', '.join(sorted(defined_group_ids()))} (список: GET /v1/groups)",
+        )
+
+
+def _document_groups(
+    ident, groups_param: str, group_param: str, identity_mode: str
+) -> list[str]:
+    """access_groups документа.
+
+    K7: явный выбор группы (group=<id>) доступен каждому аутентифицированному;
+    валидность группы проверена ранее (_ensure_group_exists, до записи L0).
+    access_groups от клиента (инвариант 5: группы не приходят от клиента) -
+    по-прежнему только админу. Без всего - безопасный дефолт: личная
+    user:<uid> (identity-режимы) или группы владельца (static); производные
+    группы ident (all и определённые серверные - их резолвер добавляет для
+    ЧТЕНИЯ) документу по умолчанию не полагаются, иначе каждая личная загрузка
+    стала бы видна всем."""
+    if group_param.strip() and groups_param.strip():
+        # ревью K7: молчаливый приоритет group= над access_groups= скрывал
+        # половину намерения админа - требуем выбрать что-то одно
+        raise HTTPException(
+            status_code=400,
+            detail="укажите что-то одно: group= (выбор группы) или access_groups= (админ)",
+        )
+    if group_param.strip():
+        return [group_param.strip()]
     if groups_param.strip():
         if not ident.admin:
             raise HTTPException(
@@ -87,7 +125,8 @@ def _document_groups(ident, groups_param: str, identity_mode: str) -> list[str]:
             return parsed
     if identity_mode != "static" and ident.user_id:
         return [f"user:{ident.user_id}"]
-    groups = sorted(ident.groups - {"*"})
+    derived = defined_group_ids() | {"*"}  # GROUP_ALL входит в defined
+    groups = sorted(ident.groups - derived)
     return groups or sorted({"personal"})
 
 
@@ -95,9 +134,11 @@ def _document_groups(ident, groups_param: str, identity_mode: str) -> list[str]:
 async def upload_document(
     request: Request, authorization: str = Header(default="")
 ):
-    """Загрузка документа: multipart (file [+ title, access_groups]) или JSON
-    ({text, title}). Форматы первого шага: txt/md/pdf. Квоты проверяются ДО
-    постановки в очередь (документы - 403, размер L0 - 413).
+    """Загрузка документа: multipart (file [+ title, group, access_groups]) или
+    JSON ({text, title, group}). Форматы первого шага: txt/md/pdf. Квоты
+    проверяются ДО постановки в очередь (документы - 403, размер L0 - 413).
+    group=<id> (K7) - серверная группа доступа, невалидная - 400; access_groups -
+    только админу (инвариант 5).
 
     P1 ревью K4: Content-Length проверяется ДО разбора тела против жёсткого
     капа VELES_UPLOAD_MAX_MB и против свободного остатка квоты (грубо, без
@@ -146,6 +187,7 @@ async def upload_document(
     filename = ""
     title = ""
     groups_param = ""
+    group_param = ""
     if "multipart/form-data" in content_type:
         form = await request.form()
         upload = form.get("file")
@@ -154,6 +196,7 @@ async def upload_document(
         raw = await upload.read()
         filename = upload.filename or ""
         title = str(form.get("title") or "").strip()
+        group_param = str(form.get("group") or "").strip()
         groups_param = str(form.get("access_groups") or "").strip()
     elif "application/json" in content_type:
         try:
@@ -164,6 +207,10 @@ async def upload_document(
             )
         raw = body.text.encode("utf-8")
         title = body.title.strip()
+        group_param = body.group.strip()
+
+    # K7: невалидная группа - 400 до квоты, записи L0 и очереди
+    _ensure_group_exists(group_param)
 
     if "multipart/form-data" in content_type:
         if not raw:
@@ -207,7 +254,7 @@ async def upload_document(
         title=title,
         document_id=document_id,
         size_bytes=len(raw),
-        groups=_document_groups(ident, groups_param, state["identity_mode"]),
+        groups=_document_groups(ident, groups_param, group_param, state["identity_mode"]),
     )
     return JSONResponse(
         status_code=202,
