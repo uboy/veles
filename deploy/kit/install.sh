@@ -362,6 +362,19 @@ install_lite() {
         "$IN_DIR/.venv/bin/pip" install -q -e "$REPO_DIR"
     fi
     ok "CLI установлен: $IN_DIR/.venv/bin/veles"
+    # обёртка CLI с окружением установки: без неё `veles ask` не видит индекс -
+    # VELES_DATA живёт в .env, который CLI сам не читает (поймано приёмкой K15
+    # в чистом контейнере; verify-install проходил, потому что грузит .env сам)
+    cat > "$IN_DIR/veles" <<WRAPPER
+#!/usr/bin/env bash
+# CLI veles с окружением установки (env из .env рядом): ./veles ask|add|status
+set -euo pipefail
+here=\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)
+set -a; source "\$here/.env"; set +a
+exec "\$here/.venv/bin/veles" "\$@"
+WRAPPER
+    chmod +x "$IN_DIR/veles"
+    ok "CLI с окружением: $IN_DIR/veles (ask|add|status)"
     if [ "$DEMO" = 1 ]; then
         warmup_embedder
     fi
@@ -477,8 +490,8 @@ elif [ "$PROFILE" = "personal" ]; then
     info "  статус:       systemctl --user status veles-facade (или $IN_DIR/run-facade.sh)"
     info "  удалить всё:  $SCRIPT_DIR/uninstall.sh --dir $IN_DIR --purge-data"
 else
-    info "  CLI:          $IN_DIR/.venv/bin/veles status"
-    info "  вопросы:      $IN_DIR/.venv/bin/veles ask \"вопрос\" (нужен индекс - см. README)"
+    info "  CLI:          $IN_DIR/veles status"
+    info "  вопросы:      $IN_DIR/veles ask \"вопрос\""
     info "  удалить всё:  $SCRIPT_DIR/uninstall.sh --dir $IN_DIR --purge-data"
 fi
 
@@ -487,8 +500,8 @@ if [ "$DEMO" = 1 ]; then
     info "Демо готово: база наполнена 5 документами (ООО «Ромашка», фикшн). Проверенные вопросы:"
     sed 's/^/    /' "$SCRIPT_DIR/demo/questions.txt"
     if [ "$PROFILE" = "lite" ]; then
-        info "Как спросить:   $IN_DIR/.venv/bin/veles ask \"вопрос\""
-        info "Свой документ:  $IN_DIR/.venv/bin/veles add файл.txt --title \"Название\" - и он сразу в поиске"
+        info "Как спросить:   $IN_DIR/veles ask \"вопрос\""
+        info "Свой документ:  $IN_DIR/veles add файл.txt --title \"Название\" - и он сразу в поиске"
     elif [ "$PROFILE" = "personal" ]; then
         public_url=$(env_get "$ENV_FILE" VELES_PUBLIC_URL)
         info "Как спросить:   веб-чат ${public_url} (или curl POST ${public_url}/v1/knowledge/query)"
