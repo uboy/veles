@@ -15,6 +15,11 @@
   тот же, что FORWARD_USER_INFO_HEADER_JWT_SECRET в Open WebUI.
 
 Верификация JWT - stdlib (hmac/base64/json), новых зависимостей нет.
+
+Группы (K7): каждый аутентифицированный получает ``all`` («видно всем»)
+и membership не-all групп из конфига групп (veles/policy/groups.py,
+<VELES_DATA>/groups.json); группы из заголовков/JWT WebUI НЕ резолвятся -
+Open WebUI 0.11.4 их в ENABLE_FORWARD_USER_INFO_HEADERS не передаёт.
 """
 
 from __future__ import annotations
@@ -31,6 +36,7 @@ from dataclasses import dataclass
 from typing import Mapping, Optional, Protocol
 
 from ..config import DEFAULT_ACCESS_GROUPS
+from .groups import GROUP_ALL, defined_group_ids, membership_of
 
 # Заголовки Open WebUI 0.11.4 (backend/open_webui/env.py, utils/headers.py)
 HEADER_USER_NAME = "X-OpenWebUI-User-Name"
@@ -129,7 +135,11 @@ class StaticOwnerResolver:
         return cls(groups or None)
 
     def allowed_groups(self) -> set[str]:
-        return set(self._groups)
+        """Группы владельца (K7): настроенные + all (неявно) + все определённые
+        серверные - владелец админ, состав групп ему виден целиком. Произвольные
+        access_groups вне конфига - как раньше: только с правом (группа в
+        allowed_groups), не автоматически."""
+        return set(self._groups) | {GROUP_ALL} | defined_group_ids()
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
         return RequestIdentity(user_id="", admin=True, groups=self.allowed_groups())
@@ -141,9 +151,9 @@ class JwtHeaderResolver:
     mode="headers": X-OpenWebUI-User-Email (fallback X-OpenWebUI-User-Name).
     mode="jwt": X-OpenWebUI-User-Jwt, HS256, секрет обязателен.
 
-    Все аутентифицированные пользователи получают одинаковые группы
-    (identity_groups); per-user маппинг групп - отдельная фаза корпоративного
-    контура. admin - по VELES_ADMIN_EMAILS.
+    K7: у пользователя all (неявно все аутентифицированные) + membership не-all
+    групп из конфига групп (<VELES_DATA>/groups.json, admin правит файлом);
+    admin - по VELES_ADMIN_EMAILS, с wildcard "*".
     """
 
     def __init__(self, mode: str, secret: str = "", groups: set[str] | None = None):
@@ -166,7 +176,10 @@ class JwtHeaderResolver:
         )
 
     def allowed_groups(self) -> set[str]:
-        return set(self._groups)
+        """Базовые группы владельца/bearer-доступа (K7): настроенные + all +
+        все определённые серверные. Пер-пользовательский membership в это
+        множество НЕ входит - он срезается по uid в _identity."""
+        return set(self._groups) | {GROUP_ALL} | defined_group_ids()
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
         if self.mode == "jwt":
@@ -202,7 +215,10 @@ class JwtHeaderResolver:
         # его загрузки несут только её, поэтому чужие документы невидимы в поиске
         # даже при общих корпоративных группах; админ получает wildcard "*"
         # (hybrid_search пропускает групповой фильтр) - видит всё.
-        groups = self.allowed_groups() | {f"user:{uid}"}
+        # K7 (группы): all неявно у всех аутентифицированных; membership не-all
+        # групп - из конфига групп; настроенные VELES_IDENTITY_GROUPS остаются
+        # общими (обратная совместимость K1).
+        groups = set(self._groups) | {GROUP_ALL} | membership_of(uid) | {f"user:{uid}"}
         if admin:
             groups.add("*")
         return RequestIdentity(uid, admin, groups)
