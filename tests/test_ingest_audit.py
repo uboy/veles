@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import shutil
 import sys
 from pathlib import Path
 
@@ -432,3 +433,73 @@ def test_codex_detectors_on_synthetic_code(tmp_path):
     assert c["numbering_gaps"] == 1  # разрыв 2 -> 5; после перезапуска разрывов нет
     assert "нет ст.3..4" in c["gap_examples"][0]
     assert c["numbering_restarts"] == 1  # 5 -> 1
+
+
+def test_count_mismatch_multi_root_compares_canonical(tmp_path):
+    """Сверка с индексом идёт против canonical-корня: копия документа в
+    canonical-docling НЕ суммируется (иначе зеркальные документы - ложное
+    расхождение; на проде 29.09 таких 88). Индекс == canonical -> зелёный."""
+    doc = make_doc("docs/Кодекс.pdf", GOOD_PARAS)
+    data = write_canon(tmp_path, [doc])
+    # зеркало в другом корне: тот же document_id, ДРУГОЕ число узлов
+    docling_root = data / "canonical-docling"
+    mirror = make_doc("docs/Кодекс.pdf", [*GOOD_PARAS, "Третий абзац зеркальной копии в docling-корне."])
+    save_document(mirror, root=docling_root, by="tester")
+    # в индексе ровно 2 узла canonical-копии -> совпадение, расхождения нет
+    _write_index(data, {
+        f"n{i}": {"document_id": "docs/Кодекс.pdf", "status": "current"} for i in range(2)
+    })
+    rc, rep = run_audit(data, "--index")
+    assert rc == 0, rep["detectors"]
+    assert detector(rep, "count_mismatch_index") == 0
+    # а если в индексе 5 - расхождение считается против canonical (2), не против суммы (5)
+    shutil.rmtree(data / "index")
+    _write_index(data, {
+        f"n{i}": {"document_id": "docs/Кодекс.pdf", "status": "current"} for i in range(5)
+    })
+    rc, rep = run_audit(data, "--index")
+    assert rc == 1
+    assert detector(rep, "count_mismatch_index") == 1
+    assert "канон 2 (не-root, canonical), индекс 5" in examples(rep, "count_mismatch_index")[0]
+
+
+def test_index_doc_absent_from_canonical_root(tmp_path):
+    """Документ в индексе, но его каталог есть только в canonical-docling -
+    дрейф канон/индекс (прецедент УК РФ на проде) -> count_mismatch_index."""
+    data = write_canon(tmp_path, [make_doc("docs/Обычный.pdf", GOOD_PARAS)])
+    docling_root = data / "canonical-docling"
+    only_docling = make_doc("docs/Только-docling.pdf", GOOD_PARAS)
+    save_document(only_docling, root=docling_root, by="tester")
+    _write_index(data, {
+        f"n{i}": {"document_id": "docs/Только-docling.pdf", "status": "current"}
+        for i in range(2)
+    })
+    rc, rep = run_audit(data, "--index")
+    assert rc == 1
+    assert detector(rep, "count_mismatch_index") == 1
+    example = examples(rep, "count_mismatch_index")[0]
+    assert "в canonical-корне отсутствует" in example
+    assert "копия только в прочих корнях: 2 узлов" in example
+
+
+def test_twin_dirs_compare_first_dir_not_sum(tmp_path):
+    """Каталоги-близнецы (легаси-имена): канон отдаёт документ дважды, но
+    сверка с индексом идёт против ПЕРВОГО каталога (sorted) - как
+    iter_documents после дедупа d135953; близнецы сами остаются находкой
+    duplicate_document_id_dirs."""
+    doc = make_doc("lectures/лекция.txt", GOOD_PARAS)
+    data = write_canon(tmp_path, [doc])
+    canon = data / "canonical"
+    # близнец: другой каталог, тот же document_id; sorted-порядок ставит его ПЕРВЫМ
+    twin_dir = canon / "aaa_lectures_лекция.txt"
+    twin_dir.mkdir()
+    for name in ("manifest.json", "nodes.jsonl"):
+        shutil.copy(canon / "lectures_лекция.txt" / name, twin_dir / name)
+    # в индексе ровно count первого каталога -> по сумме (4) было бы расхождение
+    _write_index(data, {
+        f"n{i}": {"document_id": "lectures/лекция.txt", "status": "current"} for i in range(2)
+    })
+    rc, rep = run_audit(data, "--index")
+    assert detector(rep, "count_mismatch_index") == 0
+    assert detector(rep, "duplicate_document_id_dirs") == 1
+    assert rc == 1  # красный - из-за близнецов, не из-за counts

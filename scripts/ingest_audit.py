@@ -19,7 +19,12 @@ Read-only обход канона (каталоги <VELES_DATA>/canonical* - т
   расхождение counts: манифест схемы v3.0 не хранит число узлов, поэтому пункт
     сверяется по внешним источникам счётчиков: (а) --index: индексируемые узлы
     документа (не-root, не superseded) в meta.json/overlay индекса против
-    канона; (б) --jobs: nodes последнего done-джоба (len(doc.nodes), с root)
+    canonical-корня - индекс строится из него (первый каталог при каталогах-
+    близнецах, как у iter_documents после дедупа d135953; копии в прочих
+    canonical*-корнях не суммируются - иначе зеркальные документы давали бы
+    ложное расхождение); документ в индексе без каталога в canonical-корне -
+    отдельная находка (дрейф канон/индекс);
+    (б) --jobs: nodes последнего done-джоба (len(doc.nodes), с root)
     в uploads/ingest-jobs.jsonl против канона;
   два каталога одного корня с одним document_id (legacy-дубли имён до фикса
     28.09) - при пересборке такой документ индексируется дважды;
@@ -403,7 +408,14 @@ def run_audit(args: argparse.Namespace) -> dict:
 
     doc_rows: list[dict] = []
     root_stats: list[dict] = []
-    canon_indexable: dict[str, int] = {}   # document_id -> не-root узлы (для индекса)
+    # Индекс строится из canonical-корня (veles.config.CANONICAL_DIR), поэтому
+    # сверка с индексом идёт против ПЕРВОГО каталога документа в canonical
+    # (sorted-порядок - та же семантика, что у iter_documents после дедупа
+    # d135953). Копии документа в других корнях (canonical-docling и т.п.) не
+    # суммируются: иначе каждый зеркальный документ давал бы ложное
+    # расхождение (на проде 29.09 таких ложных - 88).
+    canon_canonical: dict[str, int] = {}   # document_id -> не-root узлы canonical-корня (первый каталог)
+    canon_rest: dict[str, int] = {}        # document_id -> не-root узлы прочих корней (информация)
     canon_nodes_all: dict[str, int] = {}   # document_id -> все узлы (для джобов)
     canon_roots_of: dict[str, set[str]] = {}
 
@@ -420,7 +432,12 @@ def run_audit(args: argparse.Namespace) -> dict:
             docs += 1
             nodes_total += row["nodes"]
             did = row["document_id"] or f"(без id:{d.name})"
-            canon_indexable[did] = canon_indexable.get(did, 0) + row["indexable_nodes"]
+            if root.name == "canonical":
+                # первый каталог в sorted-порядке побеждает (дедуп iter_documents)
+                if did not in canon_canonical:
+                    canon_canonical[did] = row["indexable_nodes"]
+            else:
+                canon_rest[did] = canon_rest.get(did, 0) + row["indexable_nodes"]
             canon_nodes_all[did] = canon_nodes_all.get(did, 0) + row["nodes"]
             canon_roots_of.setdefault(did, set()).add(root.name)
         # дубли document_id ВНУТРИ корня (каталоги-близнецы legacy-имён)
@@ -438,17 +455,20 @@ def run_audit(args: argparse.Namespace) -> dict:
 
     # сверка counts с индексом и журналом джобов
     if index_counts is not None:
-        for did in sorted(canon_indexable):
+        for did in sorted(canon_canonical):
             idx_n = index_counts.get(did)
             if idx_n is None:
                 _found(state, "doc_not_in_index",
-                       f"{did}: в каноне {canon_indexable[did]}, в индексе 0")
-            elif idx_n != canon_indexable[did]:
+                       f"{did}: в каноне {canon_canonical[did]}, в индексе 0")
+            elif idx_n != canon_canonical[did]:
                 _found(state, "count_mismatch_index",
-                       f"{did}: канон {canon_indexable[did]} (не-root), индекс {idx_n}")
-        for did in sorted(set(index_counts) - set(canon_indexable)):
+                       f"{did}: канон {canon_canonical[did]} (не-root, canonical), индекс {idx_n}")
+        for did in sorted(set(index_counts) - set(canon_canonical)):
+            note = ""
+            if did in canon_rest:
+                note = f" (копия только в прочих корнях: {canon_rest[did]} узлов)"
             _found(state, "count_mismatch_index",
-                   f"{did}: в индексе {index_counts[did]}, в каноне отсутствует")
+                   f"{did}: в индексе {index_counts[did]}, в canonical-корне отсутствует{note}")
     if jobs_counts is not None:
         for did, jnodes in sorted(jobs_counts.items()):
             canon_n = canon_nodes_all.get(did, 0)
