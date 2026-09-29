@@ -197,4 +197,12 @@ class JwtHeaderResolver:
     def _identity(self, uid: str) -> Optional[RequestIdentity]:
         if not uid or _UNSAFE_USER_ID.search(uid):
             return None
-        return RequestIdentity(uid, uid in admin_emails(), self.allowed_groups())
+        admin = uid in admin_emails()
+        # K4 (user ingest): у каждого пользователя личная группа user:<uid> -
+        # его загрузки несут только её, поэтому чужие документы невидимы в поиске
+        # даже при общих корпоративных группах; админ получает wildcard "*"
+        # (hybrid_search пропускает групповой фильтр) - видит всё.
+        groups = self.allowed_groups() | {f"user:{uid}"}
+        if admin:
+            groups.add("*")
+        return RequestIdentity(uid, admin, groups)

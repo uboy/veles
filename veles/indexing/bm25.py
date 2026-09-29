@@ -31,11 +31,14 @@ class Bm25Index:
             tf: dict[str, int] = {}
             for t in tokens:
                 tf[t] = tf.get(t, 0) + 1
-            self.ids.append(nid)
-            self.doc_lens.append(len(tokens))
-            self.tfs.append(tf)
             for term in tf:
                 self.df[term] = self.df.get(term, 0) + 1
+            self.doc_lens.append(len(tokens))
+            self.tfs.append(tf)
+            # ids дописывается ПОСЛЕДНИМ в итерации (K4): search в другом потоке
+            # берёт n_docs = len(ids) и индексирует tfs/doc_lens по i < n_docs -
+            # безопасно читать индекс, пока воркер очереди загрузок его дополняет
+            self.ids.append(nid)
         self.avgdl = (sum(self.doc_lens) / len(self.doc_lens)) if self.doc_lens else 0.0
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:

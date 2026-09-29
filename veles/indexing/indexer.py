@@ -35,6 +35,13 @@ class IndexBundle:
             ),
             encoding="utf-8",
         )
+        # полный снапшот снят с канона, куда уже легли все загрузки K4, -
+        # накопленный оверлей устарел и должен не дублировать узлы
+        from .overlay import overlay_path
+
+        opath = overlay_path(dir_path)
+        if opath.exists():
+            opath.unlink()
 
 
 def build_index(
@@ -134,9 +141,15 @@ def load_index(dir_path: Path, store: VectorStore | None = None) -> "IndexBundle
         raise ValueError(
             "В meta.json нет identifiers - индекс собран старой версией veles. Пересоберите: python -m veles index"
         )
-    return IndexBundle(
+    bundle = IndexBundle(
         vector=store,
         bm25=bm25,
         node_meta=meta["node_meta"],
         identifiers=set(meta["identifiers"]),
     )
+    # K4: дельта инкрементальных загрузок поверх снапшота - документ, загруженный
+    # пользователем до рестарта, ищется и после него (без пересборки)
+    from .overlay import apply_overlay
+
+    apply_overlay(bundle, dir_path)
+    return bundle

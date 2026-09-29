@@ -53,7 +53,12 @@ def hybrid_search(
 
     def authorized(nid: str) -> bool:
         meta = bundle.node_meta.get(nid)
-        if not meta or not (set(meta.get("access_groups", [])) & groups):
+        if not meta:
+            return False
+        # K4: "*" в группах запросчика (админ из JwtHeaderResolver) - групповой
+        # фильтр обходится, ревизионный остаётся; ревизионный конъюнкт идёт после
+        # группового, ACL не ослаблен
+        if "*" not in groups and not (set(meta.get("access_groups", [])) & groups):
             return False
         if revision == "all":
             return True
