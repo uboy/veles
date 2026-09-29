@@ -13,7 +13,9 @@ append-журнал <VELES_DATA>/uploads/ingest-jobs.jsonl с boot-id проце
 перезапущен». Повторная проверка возвращает failed из журнала.
 
 Квоты (VELES_QUOTA_DOCS / VELES_QUOTA_MB, 0 = без лимита) проверяются ДО
-постановки в очередь: документы - 403, суммарный размер L0 - 413.
+постановки в очередь: документы - 403, суммарный размер L0 - 413. Кап очереди
+(K8, VELES_INGEST_QUEUE_MAX, дефолт 50, 0 = без лимита) - 429 «очередь занята»,
+постановка под замком. Журнал ротируется при 5 МБ (активный -> .1, 2 файла).
 
 Аудит: событие upload в ingest-audit.jsonl (by, размер, document_id, job_id,
 исход) рядом с событиями ingest из canonical store.
@@ -48,6 +50,11 @@ JOB_STATUSES = ("queued", "running", "done", "failed")
 ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf"}
 
 _LEDGER_NAME = "ingest-jobs.jsonl"
+
+# Ротация журнала (K8): при достижении размера активный файл переименовывается
+# в .1 (старый .1 заменяется), держатся 2 файла - активный + одна архивная
+# генерация; история джобов старше ротации в list_jobs/lookup не читается
+_LEDGER_ROTATE_BYTES = 5 * 1024 * 1024
 
 # имя файла: без разделителей пути и обхода каталогов; первая буква/цифра,
 # дальше буквы/цифры/пробел/точка/подчёркивание/дефис/@()+[] (\\w - и кириллица)
@@ -98,6 +105,29 @@ class QuotaExceeded(Exception):
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+
+
+class QueueCapacityExceeded(Exception):
+    """Кап очереди загрузки (K8): queued-джобов больше VELES_INGEST_QUEUE_MAX -
+    фасад отвечает 429 тем же контрактом, что QuotaExceeded."""
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+def queue_max_queued() -> int:
+    """Лимит queued-джобов очереди (VELES_INGEST_QUEUE_MAX, дефолт 50;
+    0 = без лимита). Мусор в env -> дефолт. Читается на вызове (как квоты),
+    чтобы тесты и кит подменяли лимит без пересоздания фасада."""
+    raw = os.environ.get("VELES_INGEST_QUEUE_MAX", "").strip()
+    if not raw:
+        return 50
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 50
 
 
 def check_quota(user_directory: str, incoming_bytes: int, replacing: bool) -> None:
@@ -344,6 +374,9 @@ class IngestQueue:
         self._q: pyqueue.Queue = pyqueue.Queue()
         self._running_job: str | None = None
         self._stopped = False
+        # кап очереди (K8): проверка лимита и постановка атомарны - два
+        # одновременных submit не могут переполнить очередь вдвоём
+        self._submit_lock = threading.Lock()
         self._thread: threading.Thread | None = None
         if start_worker:
             self._thread = threading.Thread(
@@ -357,19 +390,27 @@ class IngestQueue:
         self, *, user_id: str, filename: str, title: str, document_id: str,
         size_bytes: int, groups: list[str],
     ) -> Job:
-        job = Job(
-            job_id=uuid.uuid4().hex,
-            boot_id=self.boot_id,
-            user_id=user_id,
-            filename=filename,
-            title=title,
-            document_id=document_id,
-            size_bytes=size_bytes,
-            groups=list(groups),
-        )
-        self._jobs[job.job_id] = job
-        self._append_ledger(job)
-        self._q.put(job)
+        max_queued = queue_max_queued()
+        with self._submit_lock:
+            # кап только на ждущих в очереди (qsize): взятый воркером джоб уже
+            # не queued; превышение - отказ ДО записи L0-джоба в журнал
+            if max_queued and self._q.qsize() >= max_queued:
+                raise QueueCapacityExceeded(
+                    429, "очередь занята, повторите позже "
+                         f"(лимит {max_queued}, VELES_INGEST_QUEUE_MAX)")
+            job = Job(
+                job_id=uuid.uuid4().hex,
+                boot_id=self.boot_id,
+                user_id=user_id,
+                filename=filename,
+                title=title,
+                document_id=document_id,
+                size_bytes=size_bytes,
+                groups=list(groups),
+            )
+            self._jobs[job.job_id] = job
+            self._append_ledger(job)
+            self._q.put(job)
         return job
 
     def wait_idle(self, timeout_s: float = 60.0) -> bool:
@@ -428,10 +469,21 @@ class IngestQueue:
     def _ledger_path(self) -> Path:
         return uploads_root() / _LEDGER_NAME
 
+    def _rotate_ledger_if_needed(self, path: Path) -> None:
+        """Ротация (K8): активный журнал достиг _LEDGER_ROTATE_BYTES -
+        переименовывается в .1 (прежний .1 заменяется, держатся 2 файла);
+        следующий append создаёт активный заново. Неудача не ломает загрузку."""
+        try:
+            if path.exists() and path.stat().st_size >= _LEDGER_ROTATE_BYTES:
+                path.replace(path.with_name(_LEDGER_NAME + ".1"))
+        except OSError as e:  # noqa: BLE001 - ротация не должна ломать загрузку
+            logger.warning("ротация журнала джобов не удалась: %s", e)
+
     def _append_ledger(self, job: Job) -> None:
         try:
             path = self._ledger_path()
             path.parent.mkdir(parents=True, exist_ok=True)
+            self._rotate_ledger_if_needed(path)
             with path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(job.to_dict(), ensure_ascii=False) + "\n")
         except OSError as e:  # noqa: BLE001 - журнал не должен ломать загрузку
