@@ -648,7 +648,7 @@ def create_app(
             },
         })
 
-    @app.get("/tracker")
+    @app.api_route("/tracker", methods=["GET", "HEAD"])
     def tracker_page(
         request: Request, token: str = "", chat: str = "",
         authorization: str = Header(default=""),

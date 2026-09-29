@@ -100,6 +100,11 @@ def test_tracker_security_headers(monkeypatch, tmp_path):
     assert r.headers["Referrer-Policy"] == "no-referrer"
     csp = r.headers["Content-Security-Policy"]
     assert "default-src 'none'" in csp and "unsafe-inline" not in csp
+    # HEAD (curl -I) отдаёт те же заголовки - FastAPI сам HEAD к GET не добавляет
+    rh = client.head("/tracker")
+    assert rh.status_code == 200
+    assert rh.headers["X-Frame-Options"] == "DENY"
+    assert "Content-Security-Policy" in rh.headers
 
 
 def test_json_endpoints_have_no_security_headers(monkeypatch, tmp_path):
