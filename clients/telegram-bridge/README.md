@@ -29,11 +29,15 @@
 | `OPENWEBUI_API_KEY` | да | API-ключ пользователя Open WebUI (Settings → Account) |
 | `OPENWEBUI_MODEL` | нет | id модели по умолчанию (пусто - дефолт WebUI) |
 | `OPENWEBUI_KB_MODEL` | нет | id модели базы знаний для `/kb` |
-| `VELES_BASE_URL` | нет | фасад Veles для /stats /sources /toc (дефолт `http://127.0.0.1:8400`) |
+| `VELES_BASE_URL` | нет | фасад Veles для /stats /sources /toc и загрузки документов (дефолт `http://127.0.0.1:8400`) |
 | `VELES_API_TOKEN` | нет | bearer фасада (тот же `VELES_API_TOKEN` из veles-facade.env) |
 | `BRIDGE_SYSTEM_PROMPT` | нет | системный промпт общего чата |
 | `TG_PROXY` | нет | HTTPS/SOCKS прокси для Telegram API (дефолт - напрямую) |
 | `BRIDGE_STATE_FILE` | нет | файл pairing-state (дефолт `bridge-state.json` рядом) |
+| `BRIDGE_DOC_STATE_FILE` | нет | файл групп загрузок /docgroup (дефолт `<stem pairing-state>-docgroups.json` рядом) |
+| `BRIDGE_DOC_MAX_CONCURRENT` | нет | одновременных ожиданий загрузки (дефолт 5) |
+| `BRIDGE_DOC_POLL_S` | нет | интервал опроса статуса джоба, с (дефолт 10) |
+| `BRIDGE_DOC_WATCH_TIMEOUT_S` | нет | предел ожидания завершения в мосте, с (дефолт 900) |
 | `BRIDGE_HISTORY` | нет | глубина истории общего чата |
 | `BRIDGE_SOURCE_FOOTER` | нет | HTML-подпись provenance на ответах базовой модели; пустая = выключить |
 | `PAIR_MODE` | нет | `1` (дефолт) - спарить первого `/start` |
@@ -54,3 +58,20 @@
 задачи из текста, создаёт карточки трекера). Env: `VOXFUSION_API_URL`
 (дефолт http://127.0.0.1:8500), `VOXFUSION_API_TOKEN` (пусто - фича
 выключена с подсказкой). Без пунктуации (RNNT) - для LLM/базы неважно.
+
+## Документы (загрузка в базу знаний, K9)
+
+Файл (txt/md/pdf, до 20 МБ - лимит Telegram на скачивание ботом), присланный
+в чат, уходит в базу знаний через фасад: скачивание (getFile) ->
+`POST /v1/documents` (multipart) -> «📄 Принял ...» -> по завершении джоба
+второе сообщение «✅ Загружено: <title> (группа ...)» или причина отказа
+(текст detail фасада как есть). Только владелец; документ от другого чата
+игнорируется до любых сетевых действий.
+
+- `/docgroup` - группа загрузок этого чата (текущая + список из
+  `GET /v1/groups`); `/docgroup <id>` - выбрать, persist в state-файле
+  (`BRIDGE_DOC_STATE_FILE`). Без выбора - личная группа загрузчика (дефолт
+  фасада K4/K7).
+- Завершение ждёт daemon-поток (`doc_watch_loop`), одновременных ожиданий
+  не больше `BRIDGE_DOC_MAX_CONCURRENT` (5); дальше - честный отказ.
+- API-примеры - раздел «Загрузка документов» в `deploy/kit/README.md`.
