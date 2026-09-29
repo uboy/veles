@@ -210,29 +210,39 @@ def test_stats_sees_uploaded(kb_env) -> None:
 
 def test_acl_other_user_invisible_everywhere(kb_env, monkeypatch) -> None:
     """Чужой пользователь: документ невидим в поиске (в т.ч. revision=all),
-    джоб 404, в списке джобов отсутствует; админ видит и джоб, и документ."""
+    джоб 404, в списке джобов отсутствует; админ видит и джоб, и документ.
+    Ревью K4 (P0): пути чтения под тем же ACL - source/asset чужому 404,
+    stats чужих документов не содержит; владелец-загрузчик и bearer-владелец
+    видят; подписанная ссылка на цитату работает без заголовков."""
+    import hashlib as _hashlib
+    import hmac as _hmac
+    import time as _time
+
     monkeypatch.setenv("VELES_IDENTITY_MODE", "headers")
     monkeypatch.setenv("VELES_IDENTITY_GROUPS", "corp")
     monkeypatch.setenv("VELES_ADMIN_EMAILS", "boss@corp.ru")  # читается на запросе
+    monkeypatch.setenv("VELES_API_TOKEN", "owner-token")
+    monkeypatch.setenv("VELES_LINK_SECRET", "sig-secret")
     app = create_app(pipeline=VelesPipeline(kb_env["bundle"], HashingEmbedder(), llm=None))
     ivanov = {"X-OpenWebUI-User-Email": "ivanov@corp.ru"}
     petrov = {"X-OpenWebUI-User-Email": "petrov@corp.ru"}
     boss = {"X-OpenWebUI-User-Email": "boss@corp.ru"}
+    owner = {"Authorization": "Bearer owner-token"}
     ivanov_client = TestClient(app)
     petrov_client = TestClient(app)
     boss_client = TestClient(app)
+    owner_client = TestClient(app)
 
     r = ivanov_client.post("/v1/documents", json={"text": DOC_V1, "title": DOC_TITLE},
                            headers=ivanov)
     assert r.status_code == 202
     job_id = r.json()["job_id"]
+    doc_id = r.json()["document_id"]
     assert wait_done(ivanov_client, job_id, headers=ivanov)["status"] == "done"
 
     # документ несёт личную группу ivanov
-    manifest = json.loads(
-        (_doc_dir(r.json()["document_id"], kb_env["canonical"]) / "manifest.json")
-        .read_text(encoding="utf-8")
-    )
+    doc_dir = _doc_dir(doc_id, kb_env["canonical"])
+    manifest = json.loads((doc_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["access_groups"] == ["user:ivanov@corp.ru"]
 
     # чужой в поиске: ни в дефолте, ни в revision=all; владелец и админ видят
@@ -250,6 +260,56 @@ def test_acl_other_user_invisible_everywhere(kb_env, monkeypatch) -> None:
 
     # без личности - 401 ещё до очереди
     assert TestClient(app).post("/v1/documents", json={"text": "текст"}).status_code == 401
+
+    # --- пути чтения (P0 ревью K4): source/asset/stats под тем же ACL ---
+    # актив кладём в doc_dir руками (как save_document): парсер txt активов не создаёт
+    (doc_dir / "assets").mkdir()
+    (doc_dir / "assets" / "схема.png").write_bytes(b"\x89PNG-fake")
+
+    # чужой: source и asset - 404, неотличимо от несуществующего документа
+    assert petrov_client.get(f"/v1/source/{doc_id}", headers=petrov).status_code == 404
+    assert petrov_client.get(f"/v1/asset/{doc_id}/схема.png", headers=petrov).status_code == 404
+    # несуществующий документ для того же чужого - тоже 404 (неотличимость)
+    assert petrov_client.get("/v1/source/owner/нет-такого.md", headers=petrov).status_code == 404
+
+    # оглавление: чужой документ у петрова отсутствует (и в totals.nodes),
+    # у загрузчика, админа и bearer-владельца - присутствует
+    def stat_doc_ids(client, headers):
+        d = client.get("/v1/knowledge/stats", headers=headers).json()
+        return {doc["document_id"] for doc in d["documents"]}, d["totals"]["nodes"]
+
+    petrov_docs, petrov_nodes = stat_doc_ids(petrov_client, petrov)
+    assert doc_id not in petrov_docs
+    assert petrov_nodes == 0  # засеянный документ несёт personal - петрову не виден тоже
+    for client, headers in ((ivanov_client, ivanov), (boss_client, boss),
+                            (owner_client, owner)):
+        docs, nodes = stat_doc_ids(client, headers)
+        assert doc_id in docs
+        assert nodes >= 1  # узлы видимых документов в totals считаются
+    # у админа видно больше, чем у чужого (его собственные + загрузки иванова)
+    _, boss_nodes = stat_doc_ids(boss_client, boss)
+    assert boss_nodes > petrov_nodes
+    # владелец-загрузчик, админ и bearer-владелец читают source и asset
+    for client, headers in ((ivanov_client, ivanov), (boss_client, boss),
+                            (owner_client, owner)):
+        assert client.get(f"/v1/source/{doc_id}", headers=headers).status_code == 200
+        assert client.get(f"/v1/asset/{doc_id}/схема.png", headers=headers).status_code == 200
+
+    # подписанная ссылка на цитату: работает без заголовков (sig скоупит
+    # документ+узел, групповая проверка не применяется)
+    nodes = [json.loads(l) for l in
+             (doc_dir / "nodes.jsonl").read_text(encoding="utf-8").splitlines() if l.strip()]
+    node_id = next(n["node_version_id"] for n in nodes if n.get("node_type") != "root")
+    exp = int(_time.time()) + 600
+    sig = _hmac.new(b"sig-secret", f"{doc_id}|{node_id}|{exp}".encode(),
+                    _hashlib.sha256).hexdigest()
+    r = TestClient(app).get(f"/v1/source/{doc_id}",
+                            params={"node": node_id, "exp": str(exp), "sig": sig})
+    assert r.status_code == 200
+    # битая подпись - 401, как раньше
+    assert TestClient(app).get(
+        f"/v1/source/{doc_id}",
+        params={"node": node_id, "exp": str(exp), "sig": "bad"}).status_code == 401
 
 
 def test_access_groups_param_admin_only(kb_env, monkeypatch) -> None:

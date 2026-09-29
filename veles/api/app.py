@@ -402,6 +402,33 @@ def create_app(
             return _owner_identity()
         raise HTTPException(status_code=401, detail="unauthorized")
 
+    def _canon_manifest(document_id: str) -> Optional[dict]:
+        """manifest.json документа из первого корня VELES_DATA, где он есть;
+        None - документа в каноне нет (P0 ревью K4: чтение по группам манифеста)."""
+        import json as _json
+
+        from ..canonical.store import _doc_dir
+
+        roots = [Path(q) for q in os.environ.get("VELES_DATA", "").split(os.pathsep) if q.strip()]
+        if not roots:
+            roots = [Path(__file__).resolve().parents[2] / "data"]
+        for data_root in roots:
+            for canon in sorted(data_root.glob("canonical*")):
+                m = _doc_dir(document_id, canon) / "manifest.json"
+                if m.exists():
+                    return _json.loads(m.read_text(encoding="utf-8"))
+        return None
+
+    def _visible_by_groups(meta: dict, ident: Optional[RequestIdentity]) -> bool:
+        """ACL путей чтения (P0 ревью K4): те же группы, что в hybrid_search.
+        ident None = подписанная ссылка - sig уже скоупит конкретный документ+узел
+        (ссылка выдаётся из цитат, отфильтрованных ACL), групповая проверка не
+        применяется. Админ и "*" видят всё; мета без access_groups - невидима
+        (как в ретривере)."""
+        if ident is None or ident.admin or "*" in ident.groups:
+            return True
+        return bool(set(meta.get("access_groups") or []) & ident.groups)
+
     @app.get("/v1/asset/{document_id:path}/{name}")
     def asset_file(
         request: Request, document_id: str, name: str, token: str = "",
@@ -411,10 +438,14 @@ def create_app(
 
         Доступ: bearer/token= ИЛИ подписанная ссылка exp+sig
         (sig от document_id|name|exp) ИЛИ заголовки личности (identity-режимы).
-        """
-        _link_identity(request, authorization, token, document_id, name, exp, sig)
+        Актив живёт в doc_dir - доступ по группам манифеста документа;
+        чужому - 404, неотличимый от несуществующего."""
+        ident = _link_identity(request, authorization, token, document_id, name, exp, sig)
         if not re.fullmatch(r"[\w.-]+", name):
             raise HTTPException(status_code=400, detail="bad asset name")
+        manifest = _canon_manifest(document_id)
+        if manifest is not None and not _visible_by_groups(manifest, ident):
+            raise HTTPException(status_code=404, detail="актив не найден")
         from ..canonical.store import _doc_dir
 
         roots = [Path(q) for q in os.environ.get("VELES_DATA", "").split(os.pathsep) if q.strip()]
@@ -440,8 +471,9 @@ def create_app(
         """Источник в отдельной вкладке: оригинал (txt/md/pdf) из VELES_SOURCE_ROOTS,
         иначе текстовая сборка из канона. Авторизация: bearer, token=<...> в query,
         подписанная ссылка exp+sig (sig от document_id|node|exp) или заголовки
-        личности - ссылки из цитат не могут передавать заголовки."""
-        _link_identity(request, authorization, token, document_id, node, exp, sig)
+        личности - ссылки из цитат не могут передавать заголовки. Доступ по группам
+        манифеста (P0 ревью K4): чужому - 404, неотличимый от несуществующего."""
+        ident = _link_identity(request, authorization, token, document_id, node, exp, sig)
 
         from ..canonical.store import _doc_dir
 
@@ -462,6 +494,10 @@ def create_app(
             if doc:
                 break
         if doc is None:
+            raise HTTPException(status_code=404, detail="источник не найден в каноне")
+        # P0 ревью K4: группы манифеста против групп личности; подписанная ссылка
+        # (ident is None) уже скоупит документ+узел - не проверяется по группам
+        if not _visible_by_groups(doc, ident):
             raise HTTPException(status_code=404, detail="источник не найден в каноне")
 
         basename = document_id.rsplit("/", 1)[-1]
@@ -537,16 +573,22 @@ def create_app(
 
         Питает команды /stats, /sources, /toc Telegram-моста и любые другие
         клиенты; строится из мета узлов загруженного индекса, без похода в L2.
+        Документы/узлы - по тем же группам идентификации, что поиск (P0 ревью
+        K4): чужие загрузки не видны ни в списке, ни в totals.nodes.
         """
-        _identity(request, authorization)
+        ident = _identity(request, authorization)
         p = _pipeline()
         docs: dict[str, dict] = {}
         superseded_nodes = 0
+        visible_nodes = 0
         for m in p.bundle.node_meta.values():
             # ревизии (K3): superseded-узлы в оглавление и totals.nodes не входят
             if m.get("status", "current") == "superseded":
                 superseded_nodes += 1
                 continue
+            if not _visible_by_groups(m, ident):
+                continue
+            visible_nodes += 1
             did = m.get("document_id") or "(без документа)"
             d = docs.setdefault(
                 did, {"document_id": did, "title": m.get("title") or did, "nodes": 0, "sections": set()}
@@ -561,7 +603,7 @@ def create_app(
         return {
             "totals": {
                 "documents": len(doc_list),
-                "nodes": len(p.bundle.node_meta) - superseded_nodes,
+                "nodes": visible_nodes,
                 # число superseded-узлов в индексе (бриф K3)
                 "superseded_nodes": superseded_nodes,
             },
