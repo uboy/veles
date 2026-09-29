@@ -12,12 +12,13 @@ from veles.api import app as app_module
 from veles.api.app import create_app, render_chat_content
 
 
-def _make_canon(tmp_path):
+def _make_canon(tmp_path, title="Тестовый документ", heading="Раздел 1",
+                text="Норма управляемости от 5 до 9."):
     canon = tmp_path / "data" / "canonical-test"
     doc_dir = canon / "lectures_x.txt"
     doc_dir.mkdir(parents=True)
     (doc_dir / "manifest.json").write_text(
-        json.dumps({"title": "Тестовый документ", "document_id": "lectures/x.txt",
+        json.dumps({"title": title, "document_id": "lectures/x.txt",
                     "revision_id": "r1", "parser_profile": "txt-md:0.1",
                     "access_groups": ["personal"], "sha256": "a", "status": "current",
                     "ingested_at": "2026-09-28T10:00:00+00:00", "ingested_by": "denis@corp",
@@ -31,7 +32,7 @@ def _make_canon(tmp_path):
          "access_groups": ["personal"]},
         {"logical_node_id": "lectures/x.txt#p1", "node_version_id": "nv1",
          "node_type": "paragraph", "parent_id": "lectures/x.txt#root",
-         "heading_path": ["Раздел 1"], "text": "Норма управляемости от 5 до 9.",
+         "heading_path": [heading], "text": text,
          "provenance": {"adapter": "txt-md:0.1", "source_id": "x.txt", "lines": [7, 9]},
          "access_groups": ["personal"]},
     ]
@@ -94,3 +95,54 @@ def test_source_shows_ingest_metadata(tmp_path, monkeypatch):
     r = client.get("/v1/source/lectures/x.txt", params={"token": "t"})
     assert r.status_code == 200
     assert "2026-09-28T10:00:00" in r.text and "denis@corp" in r.text
+
+
+# --- ревью K6 P2-3: reflect-XSS на /v1/source ---
+
+
+def test_source_html_escapes_document_texts(tmp_path, monkeypatch):
+    """Негатив: title/heading_path/текст из данных документа экранируются -
+    сырой payload не попадает в HTML (иначе падает по своему assert'у)."""
+    _make_canon(tmp_path, title="Тест <script>alert('t')</script>",
+                heading="Раздел <b>1</b>",
+                text="Текст <img src=x onerror='alert(2)'>")
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    client = TestClient(create_app(pipeline=None, api_token="t"))
+    r = client.get("/v1/source/lectures/x.txt", params={"token": "t"})
+    assert r.status_code == 200
+    assert "&lt;script&gt;" in r.text
+    assert "<script>alert('t')</script>" not in r.text
+    assert "Раздел &lt;b&gt;1&lt;/b&gt;" in r.text
+    assert "<b>1</b>" not in r.text
+    assert "<img src=x" not in r.text
+
+
+def test_source_rejects_malformed_node(tmp_path, monkeypatch):
+    """node валидируется строго ([\\w.-]+): JS-инъекция через query -> 400;
+    валидный node по-прежнему работает (скролл к анкеру)."""
+    _make_canon(tmp_path)
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    client = TestClient(create_app(pipeline=None, api_token="t"))
+    r = client.get("/v1/source/lectures/x.txt",
+                   params={"token": "t", "node": "';fetch('//attacker')//"})
+    assert r.status_code == 400
+    ok = client.get("/v1/source/lectures/x.txt", params={"token": "t", "node": "nv1"})
+    assert ok.status_code == 200
+    assert "id='n-nv1'" in ok.text
+
+
+def test_source_security_headers(tmp_path, monkeypatch):
+    """Страница источника несёт тот же набор заголовков, что /tracker; CSP
+    допускает только инлайн-скрипт скролла (script-src 'unsafe-inline')."""
+    _make_canon(tmp_path)
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    client = TestClient(create_app(pipeline=None, api_token="t"))
+    r = client.get("/v1/source/lectures/x.txt", params={"token": "t"})
+    assert r.status_code == 200
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["X-Frame-Options"] == "DENY"
+    assert r.headers["Referrer-Policy"] == "no-referrer"
+    csp = r.headers["Content-Security-Policy"]
+    assert "default-src 'none'" in csp
+    assert "script-src 'unsafe-inline'" in csp
+    assert "frame-ancestors 'none'" in csp

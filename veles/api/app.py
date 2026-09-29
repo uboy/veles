@@ -436,6 +436,12 @@ def create_app(
         подписанная ссылка exp+sig (sig от document_id|node|exp) или заголовки
         личности - ссылки из цитат не могут передавать заголовки."""
         _link_identity(request, authorization, token, document_id, node, exp, sig)
+        # node попадает в инлайн-скрипт скролла: только символы, безопасные для
+        # JS-строки и HTML - инъекция через query невозможна (ревью K6 P2-3)
+        if node and not re.fullmatch(r"[\w.-]+", node):
+            raise HTTPException(status_code=400, detail="bad node")
+
+        import html as _html
 
         from ..canonical.store import _doc_dir
 
@@ -472,29 +478,47 @@ def create_app(
             if line.strip():
                 nodes.append(_json.loads(line))
         anchor = f'n-{node}' if node else ""
+        esc = _html.escape
+        title = esc(doc.get('title', document_id))
         parts = [
             "<!doctype html><html><head><meta charset='utf-8'>",
-            f"<title>{doc.get('title', document_id)}</title></head><body>",
-            f"<h1>{doc.get('title', document_id)}</h1>",
-            f"<p><i>{document_id} · {doc.get('parser_profile', '')} · "
+            # тексты документа и document_id (он из URL) экранируются -
+            # reflect-XSS через манифест/узлы/путь (ревью K6 P2-3)
+            f"<title>{title}</title></head><body>",
+            f"<h1>{title}</h1>",
+            f"<p><i>{esc(document_id)} · {esc(doc.get('parser_profile', ''))} · "
             f"фрагментов: {len(nodes)}</i></p>",
             "<p><small>загружен: "
-            f"{doc.get('ingested_at') or 'дата не зафиксирована'}"
-            + (f" · {doc['ingested_by']}" if doc.get("ingested_by") else "")
+            f"{esc(doc.get('ingested_at') or 'дата не зафиксирована')}"
+            + (f" · {esc(doc['ingested_by'])}" if doc.get("ingested_by") else "")
             + "</small></p>",
         ]
         for nd in nodes:
             if nd.get("node_type") == "root":
                 continue
+            heading = " > ".join(esc(h) for h in nd.get("heading_path") or [])
             parts.append(
                 f"<a id='n-{nd['node_version_id']}'></a>"
-                f"<p><b>{' > '.join(nd.get('heading_path') or [])}</b><br>{nd.get('text', '')}</p>"
+                f"<p><b>{heading}</b><br>{esc(nd.get('text', ''))}</p>"
             )
         parts.append(
             f"<script>var a = document.getElementById('{anchor}');"
             "if (a) a.scrollIntoView({block: 'start'});</script></body></html>"
         )
-        return HTMLResponse("\n".join(parts), status_code=200)
+        # security-заголовки как на /tracker (ревью K6 P2-3); CSP допускает
+        # единственный инлайн-скрипт страницы - скролл к анкеру node (node
+        # провалидирован выше, инъекции нет); вынос скрипта/#fragment -
+        # отдельная задача, не цель этого фикса
+        html_headers = {
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": (
+                "default-src 'none'; script-src 'unsafe-inline'; "
+                "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            ),
+        }
+        return HTMLResponse("\n".join(parts), status_code=200, headers=html_headers)
 
     def _index_loaded() -> bool:
         # честная готовность (K6): pipeline создаётся только после успешной
