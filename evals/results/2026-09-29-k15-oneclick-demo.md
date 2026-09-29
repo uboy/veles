@@ -401,7 +401,13 @@ cd /tmp/k15-pytest (git archive HEAD cc10214) && <server-home>/veles-venv/bin/py
 263 passed, 1 skipped, 1 warning in 9.88s
 ```
 
-(локально на Windows: 262 passed, 2 skipped - расхождение в платформенных skip.)
+(локально на Windows: 261 passed, 2 skipped, 1 failed - упавший
+`test_tracker.py::test_atomic_write_reader_sees_whole_file` НЕ из этой ветки:
+`git diff e37e6cc..HEAD -- tests/test_tracker.py clients/` пуст, падение -
+Windows-гонка `os.replace` в самом тесте (WinError 5: дестинация открыта
+reader-потоком теста без FILE_SHARE_DELETE; в начале сессии тот же тест
+проходил - флейк по таймингу). На стенд (Linux, целевая платформа кита) -
+зелёный.)
 /tmp стенд после работ вычищен (контейнер k15-accept удалён, /tmp/k15* пусто).
 
 ## 6. Что НЕ проверено (MANUAL / границы)
