@@ -432,7 +432,8 @@ def handle_docgroup(chat_id: int, arg: str) -> None:
         lines = [f"Группа загрузок этого чата: "
                  f"{current or 'не выбрана (личная user:...)'}", "",
                  "Выбор: /docgroup <id>. Группы:"]
-        lines += [f"- {g['id']} - {g['title']}" for g in groups]
+        lines += [f"- {documents.esc(g.get('id'))} - {documents.esc(g.get('title'))}"
+                  for g in groups]
         send_html(chat_id, "\n".join(lines))
         return
     gid = arg.split()[0]
