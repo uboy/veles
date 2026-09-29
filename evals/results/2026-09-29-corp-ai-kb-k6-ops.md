@@ -5,7 +5,7 @@
 18acfda (HEAD на /tracker). Бриф: `docs/plan/briefs/2026-09-29-k6-ops-hardening.md`.
 
 Параметры прогонов: полный `pytest tests -q` на стенд из `git archive HEAD | tar`
-в /tmp (venv <server-home>/veles-venv, `CUDA_VISIBLE_DEVICES=`); живой негатив —
+в /tmp (venv стенд, `CUDA_VISIBLE_DEVICES=`); живой негатив —
 тест-инстанс на стенд, порт 18420, tmp VELES_DATA/TRACKER_ROOT, VELES_RATE_LIMIT_RPM=3.
 Прод стенд не тронут. Docker на Windows-хосте отсутствует — compose-проверка на стенд.
 
@@ -20,7 +20,7 @@ Retry-After (секунды до ухода самого старого попа
 пусто = 240 (щедрый дефолт), 0 и мусор = выкл. /healthz, /readyz вне лимита —
 проба мониторинга, отвалившаяся по 429, читается как сбой сервиса.
 
-Тесты (`tests/test_ops.py`, 8 шт.): окно скользит (в лимите 200-эквивалент, 4-й —
+Тесты (`tests/test_ops.py`, 10 шт.): окно скользит (в лимите 200-эквивалент, 4-й —
 отказ с retry_after=58 по точному фейковому времени, после окна — снова пропуск),
 ключи независимы; 0/мусор = выключено; HTTP-негатив: 3-й запрос (RPM=2) → 429 с
 целым Retry-After ≥ 1; per-identity: лимит user A не блокирует user B; пробы
@@ -103,7 +103,7 @@ up` не делался (по брифу — на тест-сервере вла
 
 ```
 $ git archive HEAD | ssh стенд "rm -rf /tmp/veles-k6-test && mkdir -p /tmp/veles-k6-test && tar -x -C /tmp/veles-k6-test"
-$ cd /tmp/veles-k6-test && CUDA_VISIBLE_DEVICES= <server-home>/veles-venv/bin/python -m pytest tests -q
+$ cd /tmp/veles-k6-test && CUDA_VISIBLE_DEVICES= python -m pytest tests -q   (venv стенд)
 → 134 passed, 1 warning in 7.08s   (из них 10 новых — tests/test_ops.py, остальной сет без изменений)
 ```
 
@@ -163,3 +163,15 @@ config-вывода удалены (`ls /tmp/veles-k6-*` — пусто, leftove
 2. `/v1/source` (HTML с инлайн-скриптом) остался без security-заголовков — закрывать
    в рамках внешнего пилота (за caddy) или завести отдельную задачу на вынос скролла
    в статику?
+
+## Ревью безопасности (тот же день)
+
+Ревью фазы: `evals/results/2026-09-29-corp-ai-kb-k6-security-review.md` — вердикт
+PASS_С_ЗАМЕЧАНИЯМИ, P0 нет. Находки исправлены тем же заходом: P1 (блокировка
+`/healthz`/`/readyz` локом загрузки индекса; обход rate-limit ротацией `?sig=`/
+невалидным bearer + монотонный рост памяти), P2 (reflect-XSS на `/v1/source`,
+докстринг ip-фолбэка, правки этого eval — «8 шт.» → 10, «venv стенд»). Коммиты
+`7bc973a`, `3ee60a0`; доказательства (тесты, стенд 143 passed, живой негатив :18420) —
+в разделе «Фиксы (тот же заход)» файла ревью. Открытый вопрос 2 выше закрыт фиксом
+P2-3 (заголовки и CSP на `/v1/source`; инлайн-скрипт скролла оставлен с честным
+`script-src 'unsafe-inline'`, вынос/`#fragment` — отдельная задача при необходимости).
