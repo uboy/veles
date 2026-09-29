@@ -499,9 +499,11 @@ def create_app(
     def _index_loaded() -> bool:
         # честная готовность (K6): pipeline создаётся только после успешной
         # load_index() в _pipeline() - до неё (упавший warmup, нет индекса)
-        # /readyz обязан быть 503, а /healthz оставаться живостью
-        with _pipeline_lock:
-            return state["pipeline"] is not None
+        # /readyz обязан быть 503, а /healthz оставаться живостью.
+        # Без лока (ревью K6 P1-1): чтение dict атомарно под GIL; лок держится
+        # минуты на загрузке индекса - заблокированные /healthz//readyz роняют
+        # docker healthcheck (timeout 3s) и старт open-webui (service_healthy)
+        return state.get("pipeline") is not None
 
     @app.get("/healthz")
     def healthz() -> dict:
