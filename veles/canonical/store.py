@@ -4,7 +4,12 @@
 того же document_id с другим sha256 старые manifest/nodes/assets переезжают в
 <doc_dir>/revision-r{n}/ и получают status=superseded, новый канон пишется на место
 с revision_id=r{n+1}. Отсутствие revision-r*/ подкаталогов (весь канон до 29.09) =
-одна ревизия, читается без миграции."""
+одна ревизия, читается без миграции.
+
+Удаление (K10): delete_document переезжает doc_dir целиком (все ревизии и assets)
+в корзину <VELES_DATA>/trash/<timestamp>-<имя>/ - не безвозвратно, восстановление
+вручную админом. Корзина - сосед каталога canonical, вне glob("canonical*") чтения
+и вне iter_documents полной пересборки."""
 
 from __future__ import annotations
 
@@ -116,6 +121,162 @@ def _load_document_dir(d: Path, archived: bool = False) -> CanonicalDocument:
         if line.strip():
             doc.nodes.append(CanonicalNode(**json.loads(line)))
     return doc
+
+
+def canonical_roots() -> list[Path]:
+    """Каталоги канона по всем корням VELES_DATA - тот же обход, что у чтения
+    фасада (source/asset ищут документ в каждом canonical* каждого корня).
+    Env не задан (тесты/встраивание) - один CANONICAL_DIR."""
+    raw = (os.environ.get("VELES_DATA") or "").strip()
+    if raw:
+        roots = [Path(p) for p in raw.split(os.pathsep) if p.strip()]
+        dirs = [c for root in roots for c in sorted(root.glob("canonical*"))]
+        if dirs:
+            return dirs
+    return [CANONICAL_DIR]
+
+
+def trash_root() -> Path:
+    """Корень корзины удалённого: <первый корень VELES_DATA>/trash - сосед
+    canonical, вне glob("canonical*") чтения фасада и вне iter_documents
+    пересборки (удалённый канон не должен ни читаться, ни индексироваться)."""
+    raw = (os.environ.get("VELES_DATA") or "").strip()
+    if raw:
+        first = raw.split(os.pathsep)[0].strip()
+        if first:
+            return Path(first) / "trash"
+    from ..config import VELES_DATA
+
+    return Path(VELES_DATA) / "trash"
+
+
+def _find_doc_dirs(document_id: str, root: Path | None = None) -> list[tuple[Path, dict]]:
+    """(doc_dir, manifest) документа по всем корням канона. Guard обхода каталогов:
+    _doc_dir пропускает '.'/'..' в id (допустимые для имени символы), а удаление -
+    разрушительная операция, поэтому doc_dir обязан лежать НЕ глубже корня канона."""
+    found = []
+    for canon in ([root] if root is not None else canonical_roots()):
+        d = _doc_dir(document_id, canon)
+        if d.parent != canon:
+            continue
+        mpath = d / "manifest.json"
+        if not mpath.exists():
+            continue
+        try:
+            manifest = json.loads(mpath.read_text(encoding="utf-8"))
+        except (OSError, ValueError):  # noqa: BLE001 - битый манифест не для удаления
+            continue
+        found.append((d, manifest))
+    return found
+
+
+def find_document_manifest(document_id: str, root: Path | None = None) -> dict | None:
+    """manifest.json документа (первый найденный по корням) - ACL-проверка права
+    удаления выполняется вызывающим ДО delete_document; None - документа нет."""
+    for _d, manifest in _find_doc_dirs(document_id, root):
+        return manifest
+    return None
+
+
+def delete_document(
+    document_id: str,
+    root: Path | None = None,
+    by: str | None = None,
+    audit_log: Path | None = None,
+) -> dict | None:
+    """Удалить документ целиком (K10): doc_dir со ВСЕМИ ревизиями (revision-r*/
+    и assets) переезжает в корзину trash/<timestamp>-<имя>/; возвращает сведения
+    об удалённом (ответ API/CLI) или None, если документа нет.
+
+    Право удаления (владелец/админ) проверяется вызывающим до вызова - здесь
+    только физика: канон -> trash + событие delete в аудит. Узлы живого индекса
+    выводит tombstone_document (veles/indexing/overlay.py), L0 - discard_l0_file
+    (veles/ingest/queue.py); все три вызывает и API, и CLI.
+    """
+    from datetime import datetime, timezone
+
+    found = _find_doc_dirs(document_id, root)
+    if not found:
+        return None
+    audit_dir = found[0][0].parent  # каталог канона, из которого удаляем (для аудита)
+    ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+    troot = trash_root()
+    troot.mkdir(parents=True, exist_ok=True)
+
+    total_nodes = 0
+    trash_names: list[str] = []
+    revisions: set[str] = set()
+    title = ""
+    for d, manifest in found:
+        target = troot / f"{ts}-{d.name}"
+        n = 2
+        while target.exists():  # два корня/два удаления за одну секунду - суффикс
+            target = troot / f"{ts}-{n}-{d.name}"
+            n += 1
+        try:
+            shutil.move(str(d), str(target))
+        except (FileNotFoundError, OSError) as e:
+            # ревью K10 P2: double-delete от двух инженеров - проигравший получает
+            # честный None (-> 404), а не сырой 500; Windows: файл мог быть открыт
+            if not d.exists():
+                return None
+            raise RuntimeError(f"переезд в trash не удался: {e}") from e
+        trash_names.append(target.name)
+        try:
+            total_nodes += sum(
+                1 for line in (target / "nodes.jsonl").read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+        except OSError:  # noqa: BLE001 - подсчёт узлов не ломает удаление
+            pass
+        rev = str(manifest.get("revision_id") or "r1")
+        revisions.add(rev)
+        for rdir in sorted(target.glob("revision-r*")):
+            if (rdir / "manifest.json").exists():
+                revisions.add(rdir.name[len("revision-"):])
+        title = title or str(manifest.get("title") or "")
+        # мета корзины для ручного восстановления админом (document_id и так
+        # внутри manifest.json, здесь - кто и когда удалил); best-effort
+        try:
+            (target / "trash-meta.json").write_text(
+                json.dumps(
+                    {
+                        "document_id": document_id,
+                        "deleted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "deleted_by": by or "unknown",
+                        "title": title,
+                        "revisions": sorted(revisions),
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    event = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "event": "delete",
+        "document_id": document_id,
+        "by": by or "unknown",
+        "revisions": sorted(revisions),
+        "nodes_current": total_nodes,
+        "trash": trash_names,
+    }
+    try:
+        log_path = audit_log or (audit_dir / "ingest-audit.jsonl")
+        with log_path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError:  # noqa: BLE001 - журнал не должен ломать удаление
+        pass
+    return {
+        "document_id": document_id,
+        "title": title,
+        "revisions": sorted(revisions),
+        "nodes_current": total_nodes,
+        "trash": trash_names,
+    }
 
 
 def iter_documents(

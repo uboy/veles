@@ -55,6 +55,11 @@ def hybrid_search(
         meta = bundle.node_meta.get(nid)
         if not meta:
             return False
+        # K10: tombstone удаления - безусловный фильтр ДО групп и ревизий:
+        # удалённый документ не ищется никому (в т.ч. админу с "*") и ни с каким
+        # revision-параметром (all/r<n> включительно)
+        if meta.get("status") == "deleted":
+            return False
         # K4: "*" в группах запросчика (админ из JwtHeaderResolver) - групповой
         # фильтр обходится, ревизионный остаётся; ревизионный конъюнкт идёт после
         # группового, ACL не ослаблен

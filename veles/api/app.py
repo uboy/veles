@@ -641,8 +641,13 @@ def create_app(
         superseded_nodes = 0
         visible_nodes = 0
         for m in p.bundle.node_meta.values():
+            status = m.get("status", "current")
+            # K10: удалённые (tombstone) узлы не видны никому, в т.ч. админу,
+            # и в totals/счётчик ревизий не попадают
+            if status == "deleted":
+                continue
             # ревизии (K3): superseded-узлы в оглавление и totals.nodes не входят
-            if m.get("status", "current") == "superseded":
+            if status == "superseded":
                 superseded_nodes += 1
                 continue
             if not _visible_by_groups(m, ident):
