@@ -30,12 +30,19 @@ from __future__ import annotations
 import json
 import logging
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 
 from ..config import EMBED_MODEL
+
+# ревью K10 P1: писателей оверлея больше одного - воркер очереди (дельта
+# загрузки) и DELETE в тредпуле фасада (tombstone). Без лока параллельный
+# read-modify-write одного overlay.npz молча теряет дельту проигравшего
+# (tombstone - удалённый всплывает после рестарта; дельта - загрузка исчезает)
+_OVERLAY_WRITE_LOCK = threading.Lock()
 
 OVERLAY_NAME = "overlay.npz"
 
@@ -122,80 +129,83 @@ def append_overlay(index_dir: Path, new_nodes: dict, patches: dict,
     """
     index_dir = Path(index_dir)
     index_dir.mkdir(parents=True, exist_ok=True)
-    old = read_overlay(index_dir)
-    old_meta = (old or {}).get("meta") or {}
+    # ревью K10 P1: read-modify-write + запись под модульным локом - DELETE
+    # (тредпул фасада) и финализация джоба (воркер очереди) сериализованы
+    with _OVERLAY_WRITE_LOCK:
+        old = read_overlay(index_dir)
+        old_meta = (old or {}).get("meta") or {}
 
-    nodes = dict(old_meta.get("nodes") or {})
-    all_patches = dict(old_meta.get("patches") or {})
-    # патч узла, живущего в самом оверлее, сворачивается в его мету
-    for nid in list(all_patches):
-        if nid in nodes:
-            nodes[nid].update(all_patches.pop(nid))
-    nodes.update(new_nodes)
-    # K10: узел переиздан живым (повторная загрузка после удаления) - его старый
-    # патч (tombstone status=deleted) недействителен, иначе рестарт применил бы
-    # патч поверх свежей меты и переизданный документ навсегда пропал из поиска.
-    # Патчи superseded не задеваются: они целятся в id ПРЕДЫДУЩЕЙ ревизии, у новых
-    # узлов id другие (пересчитываются от новой ревизии, K3)
-    for nid in new_nodes:
-        all_patches.pop(nid, None)
-    for nid, patch in patches.items():
-        if nid in nodes:
-            nodes[nid].update(patch)
+        nodes = dict(old_meta.get("nodes") or {})
+        all_patches = dict(old_meta.get("patches") or {})
+        # патч узла, живущего в самом оверлее, сворачивается в его мету
+        for nid in list(all_patches):
+            if nid in nodes:
+                nodes[nid].update(all_patches.pop(nid))
+        nodes.update(new_nodes)
+        # K10: узел переиздан живым (повторная загрузка после удаления) - его старый
+        # патч (tombstone status=deleted) недействителен, иначе рестарт применил бы
+        # патч поверх свежей меты и переизданный документ навсегда пропал из поиска.
+        # Патчи superseded не задеваются: они целятся в id ПРЕДЫДУЩЕЙ ревизии, у новых
+        # узлов id другие (пересчитываются от новой ревизии, K3)
+        for nid in new_nodes:
+            all_patches.pop(nid, None)
+        for nid, patch in patches.items():
+            if nid in nodes:
+                nodes[nid].update(patch)
+            else:
+                all_patches[nid] = patch
+
+        old_ids = (old or {}).get("ids") or []
+        old_matrix = (old or {}).get("matrix")
+        old_consistent = bool(old_ids) and old_matrix is not None and len(old_ids) == len(old_matrix)
+        old_bm25 = old_meta.get("bm25") or []
+        if len(matrix) == 0:
+            # дельта без индексируемых узлов (например документ из одного корня):
+            # мета/патчи выше всё равно записываются, векторы не меняются
+            ids = list(old_ids) if old_consistent else []
+            matrix = old_matrix if old_consistent else np.zeros((0, 1), dtype=np.float32)
+            bm25_all = old_bm25 if old_consistent else []
+        elif old_consistent:
+            ids = old_ids + list(ids)
+            matrix = np.vstack([old_matrix, matrix.astype(np.float32)])
+            bm25_all = old_bm25 + [list(p) for p in bm25_pairs]
         else:
-            all_patches[nid] = patch
+            # старого оверлея не было/бит - начинаем с этой дельты (предупреждение
+            # уже отдал read_overlay, если файл был)
+            matrix = np.asarray(matrix, dtype=np.float32)
+            bm25_all = [list(p) for p in bm25_pairs]
 
-    old_ids = (old or {}).get("ids") or []
-    old_matrix = (old or {}).get("matrix")
-    old_consistent = bool(old_ids) and old_matrix is not None and len(old_ids) == len(old_matrix)
-    old_bm25 = old_meta.get("bm25") or []
-    if len(matrix) == 0:
-        # дельта без индексируемых узлов (например документ из одного корня):
-        # мета/патчи выше всё равно записываются, векторы не меняются
-        ids = list(old_ids) if old_consistent else []
-        matrix = old_matrix if old_consistent else np.zeros((0, 1), dtype=np.float32)
-        bm25_all = old_bm25 if old_consistent else []
-    elif old_consistent:
-        ids = old_ids + list(ids)
-        matrix = np.vstack([old_matrix, matrix.astype(np.float32)])
-        bm25_all = old_bm25 + [list(p) for p in bm25_pairs]
-    else:
-        # старого оверлея не было/бит - начинаем с этой дельты (предупреждение
-        # уже отдал read_overlay, если файл был)
-        matrix = np.asarray(matrix, dtype=np.float32)
-        bm25_all = [list(p) for p in bm25_pairs]
-
-    meta = {
-        "embed_model": EMBED_MODEL,
-        "nodes": nodes,
-        "patches": all_patches,
-        "bm25": bm25_all,
-        "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
-    # tmp-имя обязано кончаться на .npz: np.savez иначе дописывает расширение
-    tmp = index_dir / f"overlay.tmp{os.getpid()}.npz"
-    # сирота прошлого аварийного write (обрыв между savez и replace) - мусор
-    # рядом с индексом: свои tmp-файлы оверлея чистим в начале записи (записей
-    # одновременно не бывает - очередь ингеста последовательная, K8)
-    for orphan in index_dir.glob("overlay.tmp*.npz"):
-        try:
-            orphan.unlink()
-        except OSError as e:  # noqa: BLE001 - чистка не должна ломать запись
-            logger.warning("tmp-сирота оверлея %s не удалена: %s", orphan, e)
-    np.savez(
-        tmp,
-        meta=np.frombuffer(json.dumps(meta, ensure_ascii=False).encode("utf-8"), dtype=np.uint8),
-        # строковый dtype (не object) - savez без pickle, чтение c allow_pickle=False
-        ids=np.array(ids, dtype=str) if ids else np.empty(0, dtype=str),
-        matrix=matrix.astype(np.float32),
-    )
-    # fsync перед replace (K8): без сброса страниц файла на диск сбой питания
-    # между savez и replace оставляет replace-нутый файл пустым/битым -
-    # overlay молча пропускается и загрузки доедут только с пересборкой.
-    # r+b: на Windows os.fsync требует дескриптор с правом записи
-    with open(tmp, "r+b") as f:
-        os.fsync(f.fileno())
-    tmp.replace(overlay_path(index_dir))
+        meta = {
+            "embed_model": EMBED_MODEL,
+            "nodes": nodes,
+            "patches": all_patches,
+            "bm25": bm25_all,
+            "updated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        }
+        # tmp-имя обязано кончаться на .npz: np.savez иначе дописывает расширение
+        tmp = index_dir / f"overlay.tmp{os.getpid()}.npz"
+        # сирота прошлого аварийного write (обрыв между savez и replace) - мусор
+        # рядом с индексом: чистим в начале записи; под _OVERLAY_WRITE_LOCK
+        # писатель один, чужой живой tmp не встретится
+        for orphan in index_dir.glob("overlay.tmp*.npz"):
+            try:
+                orphan.unlink()
+            except OSError as e:  # noqa: BLE001 - чистка не должна ломать запись
+                logger.warning("tmp-сирота оверлея %s не удалена: %s", orphan, e)
+        np.savez(
+            tmp,
+            meta=np.frombuffer(json.dumps(meta, ensure_ascii=False).encode("utf-8"), dtype=np.uint8),
+            # строковый dtype (не object) - savez без pickle, чтение c allow_pickle=False
+            ids=np.array(ids, dtype=str) if ids else np.empty(0, dtype=str),
+            matrix=matrix.astype(np.float32),
+        )
+        # fsync перед replace (K8): без сброса страниц файла на диск сбой питания
+        # между savez и replace оставляет replace-нутый файл пустым/битым -
+        # overlay молча пропускается и загрузки доедут только с пересборкой.
+        # r+b: на Windows os.fsync требует дескриптор с правом записи
+        with open(tmp, "r+b") as f:
+            os.fsync(f.fileno())
+        tmp.replace(overlay_path(index_dir))
 
 
 def _index_node_ids(index_dir: Path, document_id: str) -> list[str]:

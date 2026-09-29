@@ -357,7 +357,9 @@ def delete_document(
     if info is None:  # гонка: манифест видели, канон исчез - неотличимый 404
         raise HTTPException(status_code=404, detail="документ не найден")
 
-    discard_l0_file(document_id)
+    # ревью K10 P2: L0 ищем по каноническому id из манифеста - sanitizer-
+    # эквивалентный id из URL не находит файл, и L0-сирота молча ест квоту
+    discard_l0_file(manifest.get("document_id") or document_id)
 
     pipeline = None
     try:

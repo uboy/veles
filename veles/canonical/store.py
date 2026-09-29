@@ -213,7 +213,14 @@ def delete_document(
         while target.exists():  # два корня/два удаления за одну секунду - суффикс
             target = troot / f"{ts}-{n}-{d.name}"
             n += 1
-        shutil.move(str(d), str(target))
+        try:
+            shutil.move(str(d), str(target))
+        except (FileNotFoundError, OSError) as e:
+            # ревью K10 P2: double-delete от двух инженеров - проигравший получает
+            # честный None (-> 404), а не сырой 500; Windows: файл мог быть открыт
+            if not d.exists():
+                return None
+            raise RuntimeError(f"переезд в trash не удался: {e}") from e
         trash_names.append(target.name)
         try:
             total_nodes += sum(
