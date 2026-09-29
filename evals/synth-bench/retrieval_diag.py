@@ -75,7 +75,7 @@ def main() -> int:
         flush=True,
     )
 
-    golden = load_golden(args.golden)
+    golden = load_golden(Path(args.golden))
     answerable = [e for e in golden if not e.get("abstain")]
     groups = DEFAULT_ACCESS_GROUPS
 
