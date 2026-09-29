@@ -6,8 +6,12 @@
 #   personal  - venv + фасад на своей машине (Linux/macOS), WebUI по --with-webui.
 #   lite      - только CLI (venv), без демонов и портов.
 #
+#   --demo    - демо в один клик: база сразу наполнена готовым мини-индексом
+#               (5 фикшн-документов ООО «Ромашка»), после установки можно
+#               сразу спрашивать. Профиль без --profile = lite.
+#
 # Примеры:
-#   ./install.sh                                  # интерактивный выбор профиля
+#   ./install.sh --demo --yes                    # демо на CLI (lite), без вопросов
 #   ./install.sh --profile lite --dir ~/veles
 #   ./install.sh --profile corporate --yes --with-bridge
 #
@@ -25,18 +29,19 @@ fi
 
 REPO_DIR=$(cd "$SCRIPT_DIR/../.." && pwd)  # deploy/kit -> корень репозитория/архива
 
-PROFILE="" IN_DIR="" DRY_RUN=0 ASSUME_YES=0
+PROFILE="" IN_DIR="" DRY_RUN=0 ASSUME_YES=0 DEMO=0
 WITH_WEBUI=0 WITH_BRIDGE=0 WITH_VOXFUSION=0
 IDENTITY_HEADERS=0   # opt-in: режим headers вместо дефолтного jwt (corporate)
 
 usage() {
-    sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+    sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --profile)          PROFILE="${2:-}"; shift 2 ;;
         --dir)              IN_DIR="${2:-}"; shift 2 ;;
+        --demo)             DEMO=1; shift ;;
         --dry-run)          DRY_RUN=1; shift ;;
         --yes|-y)           ASSUME_YES=1; shift ;;
         --with-webui)       WITH_WEBUI=1; shift ;;
@@ -49,6 +54,12 @@ while [ $# -gt 0 ]; do
 done
 
 export VELES_ASSUME_YES="$ASSUME_YES"
+
+# демо по умолчанию - lite (CLI, без docker и портов); явный --profile сильнее
+if [ "$DEMO" = 1 ] && [ -z "$PROFILE" ]; then
+    PROFILE=lite
+    info "--demo: профиль не задан - ставлю lite (corporate: --profile corporate --demo)"
+fi
 
 if [ "$WITH_VOXFUSION" = 1 ]; then
     # честно: kit не ставит транскрипцию - VoxFusion отдельный сервис со своим репо
@@ -100,6 +111,13 @@ info "профиль: $PROFILE; каталог установки: $IN_DIR"
 
 # ---------- preflight ----------
 
+if [ "$DEMO" = 1 ]; then
+    for d in index canonical documents; do
+        [ -d "$SCRIPT_DIR/demo/$d" ] || die "--demo: в ките нет demo/$d ($SCRIPT_DIR/demo) - кит собран без демо-контента"
+    done
+    ok "демо-контент: $(find "$SCRIPT_DIR/demo/documents" -name '*.md' | wc -l) документов, индекс $(du -sh "$SCRIPT_DIR/demo/index" 2>/dev/null | awk '{print $1}')"
+fi
+
 PY=""
 if [ "$PROFILE" != "corporate" ]; then
     if PY=$(find_python_min 3.11); then
@@ -130,6 +148,10 @@ fi
 
 disk_needed_mb=1024
 [ "$PROFILE" = "lite" ] || disk_needed_mb=5120
+# демо в lite/personal тянет sentence-transformers (torch) в venv
+if [ "$DEMO" = 1 ] && [ "$PROFILE" != "corporate" ]; then
+    disk_needed_mb=4096
+fi
 avail=$(disk_free_mb "$IN_DIR")
 if [ -n "$avail" ] && [ "$avail" -lt "$disk_needed_mb" ]; then
     die "мало места: свободно ${avail}МБ, нужно ≥${disk_needed_mb}МБ ($IN_DIR)"
@@ -202,6 +224,7 @@ else
     fi
 
     env_set "$ENV_FILE" VELES_KIT_PROFILE "$PROFILE"
+    env_set "$ENV_FILE" VELES_KIT_DEMO "$DEMO"
     env_set "$ENV_FILE" VELES_FACADE_PORT "$FACADE_PORT"
     env_set "$ENV_FILE" VELES_WEBUI_PORT "$WEBUI_PORT"
     env_set "$ENV_FILE" VELES_DATA "$IN_DIR/data"
@@ -278,14 +301,86 @@ else
     fi
 fi
 
+# ---------- демо-контент (K15) ----------
+
+copy_demo_content() {
+    local data_dir="$IN_DIR/data"
+    mkdir -p "$data_dir/canonical"
+    if [ -f "$data_dir/index/meta.json" ]; then
+        warn "существующий индекс сохранён - демо-индекс не копировался ($data_dir/index)"
+    else
+        # ревью K15 P1: mkdir обязателен - cp -a src/. dst/ без созданного dst
+        # падает на coreutils 8.32 (Ubuntu 22.04 LTS), на 9.4 (24.04) работает
+        mkdir -p "$data_dir/index"
+        cp -a "$SCRIPT_DIR/demo/index/." "$data_dir/index/"
+        ok "демо-индекс: $data_dir/index ($(du -sh "$SCRIPT_DIR/demo/index" | awk '{print $1}'))"
+    fi
+    if [ -n "$(ls -A "$data_dir/canonical" 2>/dev/null)" ]; then
+        warn "канон не пуст - демо-канон не копировался ($data_dir/canonical)"
+    else
+        cp -a "$SCRIPT_DIR/demo/canonical/." "$data_dir/canonical/"
+        ok "демо-канон: $data_dir/canonical"
+    fi
+    if [ "$PROFILE" = "corporate" ]; then
+        info "corporate: индекс и канон уедут в контейнер через bind ./data; корпус в контейнер не монтируется"
+    else
+        mkdir -p "$IN_DIR/corpus/demo"
+        cp -a "$SCRIPT_DIR/demo/documents/." "$IN_DIR/corpus/demo/"
+        ok "демо-документы (оригиналы): $IN_DIR/corpus/demo"
+    fi
+}
+
+# прогрев embedding-модели: для эмбеддинга ВОПРОСА модель нужна и локально;
+# скачаем на установке (~130 МБ, HuggingFace, кеш ~/.cache/huggingface),
+# чтобы первый демо-вопрос не упал и не ждал скачивания
+warmup_embedder() {
+    info "прогрев embedding-модели: скачиваю с HuggingFace (~130 МБ, один раз, кеш ~/.cache/huggingface)"
+    if "$IN_DIR/.venv/bin/python" -c "from sentence_transformers import SentenceTransformer; from veles.config import EMBED_MODEL; SentenceTransformer(EMBED_MODEL)" >/dev/null 2>&1; then
+        ok "embedding-модель готова локально - вопросы пойдут без сети"
+    else
+        warn "прогрев не удался (нет сети до huggingface.co?) - модель скачается при первом вопросе"
+    fi
+}
+
+if [ "$DEMO" = 1 ] && [ "$DRY_RUN" != 1 ]; then
+    copy_demo_content
+fi
+
 # ---------- установка ----------
 
 install_lite() {
     info "создаю venv: $IN_DIR/.venv"
     "$PY" -m venv "$IN_DIR/.venv"
     "$IN_DIR/.venv/bin/pip" install -q -U pip
-    "$IN_DIR/.venv/bin/pip" install -q -e "$REPO_DIR"
+    if [ "$DEMO" = 1 ]; then
+        # демо-вопросу нужен эмбеддер (sentence-transformers/torch);
+        # torch ставим CPU-сборкой: PyPI-вариант тянет CUDA-библиотеки (~5 ГБ),
+        # которые на чистой машине демо не нужны. Не скачался - PyPI fallback.
+        info "ставлю veles + embedding-зависимости для демо (CPU-torch + sentence-transformers)"
+        if ! "$IN_DIR/.venv/bin/pip" install -q torch --index-url https://download.pytorch.org/whl/cpu; then
+            warn "CPU-torch с download.pytorch.org не скачался - torch придёт из PyPI (с CUDA, крупнее на ~5 ГБ)"
+        fi
+        "$IN_DIR/.venv/bin/pip" install -q -e "$REPO_DIR[st]"
+    else
+        "$IN_DIR/.venv/bin/pip" install -q -e "$REPO_DIR"
+    fi
     ok "CLI установлен: $IN_DIR/.venv/bin/veles"
+    # обёртка CLI с окружением установки: без неё `veles ask` не видит индекс -
+    # VELES_DATA живёт в .env, который CLI сам не читает (поймано приёмкой K15
+    # в чистом контейнере; verify-install проходил, потому что грузит .env сам)
+    cat > "$IN_DIR/veles" <<WRAPPER
+#!/usr/bin/env bash
+# CLI veles с окружением установки (env из .env рядом): ./veles ask|add|status
+set -euo pipefail
+here=\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)
+set -a; source "\$here/.env"; set +a
+exec "\$here/.venv/bin/veles" "\$@"
+WRAPPER
+    chmod +x "$IN_DIR/veles"
+    ok "CLI с окружением: $IN_DIR/veles (ask|add|status)"
+    if [ "$DEMO" = 1 ]; then
+        warmup_embedder
+    fi
 }
 
 install_personal() {
@@ -398,7 +493,25 @@ elif [ "$PROFILE" = "personal" ]; then
     info "  статус:       systemctl --user status veles-facade (или $IN_DIR/run-facade.sh)"
     info "  удалить всё:  $SCRIPT_DIR/uninstall.sh --dir $IN_DIR --purge-data"
 else
-    info "  CLI:          $IN_DIR/.venv/bin/veles status"
-    info "  вопросы:      $IN_DIR/.venv/bin/veles ask \"вопрос\" (нужен индекс - см. README)"
+    info "  CLI:          $IN_DIR/veles status"
+    info "  вопросы:      $IN_DIR/veles ask \"вопрос\""
     info "  удалить всё:  $SCRIPT_DIR/uninstall.sh --dir $IN_DIR --purge-data"
+fi
+
+if [ "$DEMO" = 1 ]; then
+    echo
+    info "Демо готово: база наполнена 5 документами (ООО «Ромашка», фикшн). Проверенные вопросы:"
+    sed 's/^/    /' "$SCRIPT_DIR/demo/questions.txt"
+    if [ "$PROFILE" = "lite" ]; then
+        info "Как спросить:   $IN_DIR/veles ask \"вопрос\""
+        info "Свой документ:  $IN_DIR/veles add файл.txt --title \"Название\" - и он сразу в поиске"
+    elif [ "$PROFILE" = "personal" ]; then
+        public_url=$(env_get "$ENV_FILE" VELES_PUBLIC_URL)
+        info "Как спросить:   веб-чат ${public_url} (или curl POST ${public_url}/v1/knowledge/query)"
+        info "Свой документ:  curl -H \"Authorization: Bearer \$(grep '^VELES_API_TOKEN=' $ENV_FILE | cut -d= -f2)\" -F file=@документ.pdf ${public_url}/v1/documents"
+    else
+        info "Как спросить:   Open WebUI на http://<адрес сервера>:${WEBUI_PORT} (модель veles-knowledge)"
+        info "Свой документ:  через чат Telegram-бота (--with-bridge, перетащить файл) или POST /v1/documents изнутри контура"
+    fi
+    info "Удалить демо целиком: $SCRIPT_DIR/uninstall.sh --dir $IN_DIR --purge-data --yes"
 fi

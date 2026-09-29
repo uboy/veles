@@ -49,8 +49,8 @@ EOF
 # защита от CRLF (архив могут собирать на Windows; git archive применяет
 # autocrlf - проверено на K2: шаблоны .md приезжали с \r, а frontmatter
 # скиллов и доки должны быть LF) и прав на исполнение
-find "$PKG_DIR" -type f \( -name '*.sh' -o -name '*.py' -o -name '*.service' -o -name '*.md' \) -exec sed -i 's/\r$//' {} +
-chmod +x "$PKG_DIR/deploy/kit/"*.sh "$PKG_DIR/deploy/kit/lib/"*.sh 2>/dev/null || true
+find "$PKG_DIR" -type f \( -name '*.sh' -o -name '*.py' -o -name '*.service' -o -name '*.md' -o -name '*.txt' \) -exec sed -i 's/\r$//' {} +
+chmod +x "$PKG_DIR/deploy/kit/"*.sh "$PKG_DIR/deploy/kit/lib/"*.sh "$PKG_DIR/deploy/kit/demo/"*.sh 2>/dev/null || true
 
 # в архиве не должно быть секретов: ни файлов, ни содержимого
 if find "$PKG_DIR" \( -name '.env' -o -name '*.env' -o -name 'secrets*' \) | grep -q .; then

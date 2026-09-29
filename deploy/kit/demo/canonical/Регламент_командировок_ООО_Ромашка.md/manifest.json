@@ -1,0 +1,19 @@
+{
+  "document_id": "Регламент командировок ООО Ромашка.md",
+  "revision_id": "r1",
+  "title": "Регламент командировок ООО Ромашка",
+  "document_type": "summary",
+  "status": "current",
+  "sha256": "6eb8ff2a30f0bc7d6b5a6fd2b023e60173833cfc654a9d7810acc37bd875099c",
+  "parser_profile": "txt-md:0.1",
+  "access_groups": [
+    "personal"
+  ],
+  "derived_from": [
+    "onedev-vyshka:Регламент командировок ООО Ромашка.md"
+  ],
+  "previous_revision": null,
+  "ingested_at": "2026-09-29T18:21:46+00:00",
+  "ingested_by": "demo-build",
+  "assets": {}
+}

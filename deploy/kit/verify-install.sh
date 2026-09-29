@@ -81,6 +81,16 @@ if [ "$PROFILE" = "lite" ]; then
     rm -f /tmp/veles-verify-status.$$
 fi
 
+# --- демо-индекс (install --demo, маркер VELES_KIT_DEMO в .env) ---
+if [ "${VELES_KIT_DEMO:-0}" = "1" ]; then
+    if [ -f "$IN_DIR/data/index/meta.json" ]; then
+        docs=$(ls -1 "$IN_DIR/data/canonical" 2>/dev/null | wc -l)
+        report OK "демо-индекс" "$IN_DIR/data/index (документов в каноне: $docs)"
+    else
+        report FAIL "демо-индекс" "нет $IN_DIR/data/index - переустановите: install.sh --demo --yes"
+    fi
+fi
+
 # --- фасад ---
 if [ "$PROFILE" != "lite" ]; then
     if [ "$PROFILE" = "corporate" ]; then
