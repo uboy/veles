@@ -39,6 +39,7 @@ from ..policy.identity import (
     StaticOwnerResolver,
 )
 from ..retrieval.retriever import hybrid_search
+from .documents import router as documents_router  # K4: загрузка документов
 from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
 
 EMBED_DIM = 384
@@ -311,6 +312,9 @@ def create_app(
         yield
 
     app = FastAPI(title="Veles Knowledge API", version="0.4.0", lifespan=lifespan)
+    # K4: контекст для documents-роутера (identity_fn/pipeline_fn лежат в state)
+    app.state.veles = state
+    app.include_router(documents_router)
 
     def _auth(authorization: str) -> None:
         token = state["token"]
@@ -355,6 +359,11 @@ def create_app(
         if _token_owner("", authorization):
             return _owner_identity()
         raise HTTPException(status_code=401, detail="identity required")
+
+    # K4: шов для documents-роутера - та же личность и тот же пайплайн, что у
+    # query/chat (инвариант 6); app.py больше ничего о загрузке не знает
+    state["identity_fn"] = _identity
+    state["pipeline_fn"] = _pipeline
 
     def _sig_ok(document_id: str, name_or_node: str, exp: str, sig: str) -> bool:
         """Проверка подписанной ссылки: HMAC от document_id|name_or_node|exp."""
