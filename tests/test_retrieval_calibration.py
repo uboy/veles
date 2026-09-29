@@ -19,7 +19,8 @@ import pytest
 from veles.indexing.bm25 import Bm25Index
 from veles.indexing.indexer import IndexBundle
 from veles.indexing.vector_store import NumpyFlatStore
-from veles.retrieval.retriever import dedupe_pairs, hybrid_search, is_junk_node
+from veles.policy.answer import _confidence
+from veles.retrieval.retriever import Evidence, dedupe_pairs, hybrid_search, is_junk_node
 
 RRF_K = 60
 
@@ -92,6 +93,31 @@ def test_codex_boost_noop_without_codex_mention() -> None:
     boosted = hybrid_search(bundle, _qvec(), q, top_k=2, codex_boost=2.0)
     assert [e.node_version_id for e in plain] == [e.node_version_id for e in boosted]
     assert [e.rrf for e in plain] == [e.rrf for e in boosted]
+
+
+def test_codex_boost_confidence_uses_base_score() -> None:
+    """Ревью K12 P1: бонус равен потолку нормировки confidence - по финальному rrf
+    забушенный узел на ЛЮБОМ ранге давал бы 1.0 и отключал abstain-гейт для
+    «согласно НК РФ». confidence обязан считаться по органическому rrf_base:
+    бушованный узел глубоко в выдаче не проходит гейт, на первом месте - проходит."""
+    one_channel_base = 1.0 / (RRF_K + 25)  # ранг 25 в единственном канале
+    boosted = Evidence(
+        node_version_id="nk", text="т",
+        rrf=one_channel_base + 2.0 / (RRF_K + 1),  # финальный скор с бонусом
+        rrf_base=one_channel_base, dense_rank=25,
+    )
+    # до фикса: (1/86 + 2/61)/0.0328 * 0.8 = 1.08 -> 1.0, гейт снят
+    assert _confidence([boosted]) < 0.55  # abstain-гейт работает
+
+    boosted_top = Evidence(
+        node_version_id="nk1", text="т",
+        rrf=2.0 / (RRF_K + 1), rrf_base=2.0 / (RRF_K + 1),
+        dense_rank=1, bm25_rank=1,
+    )
+    assert _confidence([boosted_top]) == 1.0  # настоящий топ-1 обоих каналов - уверен
+
+    legacy = Evidence(node_version_id="x", text="т", rrf=2.0 / (RRF_K + 1))
+    assert _confidence([legacy]) == pytest.approx(0.8)  # rrf_base=None -> как раньше (один канал)
 
 
 # --- фильтр пустышек выдачи ----------------------------------------------------

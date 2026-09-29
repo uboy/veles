@@ -36,6 +36,10 @@ class Evidence:
     node_version_id: str
     text: str
     rrf: float
+    # ревью K12 P1: скор ДО codex-буста (органика); confidence и дельта конфликтов
+    # считаются по нему - бонус равен потолку нормировки и иначе обнулял бы
+    # abstain-гейт для вопросов с упоминанием кодекса
+    rrf_base: float | None = None
     dense_rank: int | None = None
     bm25_rank: int | None = None
     citations: list[Citation] = field(default_factory=list)
@@ -171,8 +175,10 @@ def hybrid_search(
     # K12: identifier-буст - вопрос называет акт («согласно НК РФ», «по ГК РФ»):
     # узлы этого документа получают бонус поверх RRF (только кандидаты каналов,
     # authorization уже применён; документ матчится подстрокой названия).
-    if codex_boost > 0.0:
-        from ..policy.identifiers import _CODEX_MAP, extract_codex_refs
+    rrf_base = dict(rrf)  # ревью K12 P1: органические скоры до буста - на них
+    if codex_boost > 0.0:  # считаются confidence и дельта конфликтов, иначе
+        from ..policy.identifiers import _CODEX_MAP, extract_codex_refs  # буст
+        # (= потолку нормировки) обнулял abstain-гейт «согласно НК РФ»
 
         refs = extract_codex_refs(query_text)
         if refs:
@@ -212,6 +218,7 @@ def hybrid_search(
                 node_version_id=nid,
                 text=meta["text"],
                 rrf=score,
+                rrf_base=rrf_base.get(nid, score),
                 dense_rank=ranks.get(nid, {}).get("dense_rank"),
                 bm25_rank=ranks.get(nid, {}).get("bm25_rank"),
                 citations=[cite],
