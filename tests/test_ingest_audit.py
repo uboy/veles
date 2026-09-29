@@ -378,6 +378,38 @@ def test_json_report_and_usage_error(tmp_path):
     assert ei.value.code == 2
 
 
+def test_iter_documents_dedups_duplicate_document_id(tmp_path, capsys):
+    """Фикс K13 (canonical/store): два каталога одного document_id (легаси-близнецы
+    до фикса имени 28.09) -> iter_documents отдаёт документ ОДИН раз, иначе
+    build_index двойно-индексирует контент (прецедент прода: НК РФ 46 355 узлов
+    в индексе при ~24 000 в каноне). Без фикса тест падает: docs было бы 2."""
+    import shutil
+
+    from veles.canonical.store import iter_documents
+
+    data = write_canon(tmp_path, [make_doc("owner/doc1.md", GOOD_PARAS)])
+    canon = data / "canonical"
+    shutil.copytree(canon / "owner_doc1.md", canon / "owner_doc1_twin_legacy_name")
+    docs = list(iter_documents(root=canon))
+    assert len(docs) == 1  # дубль пропущен, документ не задвоен
+    assert docs[0].document_id == "owner/doc1.md"
+    assert "дубль document_id" in capsys.readouterr().err  # предупреждение в stderr
+
+    # ревизии живого каталога по-прежнему отдаются (дедуп только по document_id)
+    rdir = canon / "owner_doc1.md" / "revision-r1"
+    rdir.mkdir()
+    archive_manifest = json.loads(
+        (canon / "owner_doc1.md" / "manifest.json").read_text(encoding="utf-8"))
+    archive_manifest["status"] = "superseded"  # как делает _archive_current_revision
+    (rdir / "manifest.json").write_text(
+        json.dumps(archive_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    shutil.copy(canon / "owner_doc1.md" / "nodes.jsonl", rdir / "nodes.jsonl")
+    with_rev = list(iter_documents(root=canon, include_revisions=True))
+    assert len(with_rev) == 2  # текущая + архивная ревизия живого каталога
+    assert sum(1 for d in with_rev if d.status == "superseded") == 1
+    capsys.readouterr()
+
+
 def test_codex_detectors_on_synthetic_code(tmp_path):
     """Специфика кодексов: статьи узнаваемы, «утратил силу» считается,
     разрыв нумерации и перезапуск нумерации находятся."""
