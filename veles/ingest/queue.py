@@ -654,3 +654,18 @@ class IngestQueue:
                 f.write(json.dumps(event, ensure_ascii=False) + "\n")
         except OSError as e:  # noqa: BLE001 - аудит не ломает загрузку
             logger.warning("журнал аудита недоступен: %s", e)
+
+
+def discard_l0_file(document_id: str) -> bool:
+    """Удалить L0 загрузки по document_id (K10 DELETE: канон ушёл в trash, L0 -
+    за ним; корпусные документы L0 не имеют - False без шума). Не удалось
+    удалить - False с WARN: удаление документа не отменяется."""
+    path = uploads_root() / document_id
+    if not path.is_file():
+        return False
+    try:
+        path.unlink()
+        return True
+    except OSError as e:  # noqa: BLE001 - неудача не ломает удаление документа
+        logger.warning("L0 %s не удалён при удалении документа: %s", path, e)
+        return False

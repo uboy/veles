@@ -97,12 +97,14 @@ def _apply_checked(bundle, data: dict) -> None:
             len(ids), len(bm25), len(meta.get("nodes") or {}),
         )
         return
-    if not ids:
-        return
     bundle.node_meta.update(meta.get("nodes") or {})
     for nid, patch in (meta.get("patches") or {}).items():
         if nid in bundle.node_meta:
             bundle.node_meta[nid].update(patch)
+    if not ids:
+        # патч-only оверлей (K10 tombstone удаления, дельта документа без
+        # индексируемых узлов): мета и патчи применены выше, векторов нет
+        return
     # порядок вставок как в upsert_document: мета -> векторы -> BM25
     bundle.vector.add(ids, matrix)
     if bm25:
@@ -130,6 +132,13 @@ def append_overlay(index_dir: Path, new_nodes: dict, patches: dict,
         if nid in nodes:
             nodes[nid].update(all_patches.pop(nid))
     nodes.update(new_nodes)
+    # K10: узел переиздан живым (повторная загрузка после удаления) - его старый
+    # патч (tombstone status=deleted) недействителен, иначе рестарт применил бы
+    # патч поверх свежей меты и переизданный документ навсегда пропал из поиска.
+    # Патчи superseded не задеваются: они целятся в id ПРЕДЫДУЩЕЙ ревизии, у новых
+    # узлов id другие (пересчитываются от новой ревизии, K3)
+    for nid in new_nodes:
+        all_patches.pop(nid, None)
     for nid, patch in patches.items():
         if nid in nodes:
             nodes[nid].update(patch)
@@ -187,3 +196,67 @@ def append_overlay(index_dir: Path, new_nodes: dict, patches: dict,
     with open(tmp, "r+b") as f:
         os.fsync(f.fileno())
     tmp.replace(overlay_path(index_dir))
+
+
+def _index_node_ids(index_dir: Path, document_id: str) -> list[str]:
+    """node_version_id документа из дискового индекса (meta.json + мета overlay)
+    - CLI-путь без загрузки векторов и эмбеддера. Союз покрывает всё: meta.json -
+    снапшот последней пересборки, overlay - загрузки после неё."""
+    ids: list[str] = []
+    meta_path = Path(index_dir) / "meta.json"
+    if meta_path.exists():
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):  # noqa: BLE001 - битая мета не ломает удаление
+            meta = {}
+        ids = [
+            nid for nid, m in (meta.get("node_meta") or {}).items()
+            if isinstance(m, dict) and m.get("document_id") == document_id
+        ]
+    data = read_overlay(index_dir)
+    if data is not None:
+        for nid, m in (data["meta"].get("nodes") or {}).items():
+            if isinstance(m, dict) and m.get("document_id") == document_id and nid not in ids:
+                ids.append(nid)
+    return ids
+
+
+def tombstone_document(index_dir: Path, document_id: str, bundle=None) -> int:
+    """Вывести документ из поиска (K10 DELETE): tombstone status=deleted всем его
+    узлам. Возвращает число затронутых узлов.
+
+    Механизм - tombstone-патч, не перезапись бандла: векторное хранилище и BM25
+    append-only (физическое удаление = пересборка обеих структур), а
+    IndexBundle.save стёр бы overlay вместе с дельтами ДРУГИХ документов,
+    загруженных после пересборки. Патч статуса - тот же механизм, что у
+    superseded-ревизий: дёшев (O(узлов документа)), атомарен для читателей
+    (обновление полей мета), персистентен через overlay и самоликвидируется при
+    полной пересборке (канон уже в trash, build_index его не видит, save стирает
+    overlay). До пересборки узлы остаются в векторных структурах - фильтр
+    status=deleted в hybrid_search отсекает их безусловно (и от админа, и от
+    revision=all/r<n>).
+
+    bundle живого фасада патчится в памяти - поиск закрывается СРАЗУ; тот же
+    патч дописывается в overlay - после рестарта load_index применит его к
+    основному индексу. bundle=None (CLI) - узлы собираются с диска
+    (_index_node_ids). Индекса нет - вернёт 0 (удалять нечего)."""
+    if bundle is not None:
+        nids = [
+            nid for nid, m in bundle.node_meta.items()
+            if m.get("document_id") == document_id
+        ]
+        for nid in nids:
+            bundle.node_meta[nid]["status"] = "deleted"
+    else:
+        nids = _index_node_ids(index_dir, document_id)
+    if not nids:
+        return 0
+    append_overlay(
+        Path(index_dir),
+        {},
+        {nid: {"status": "deleted"} for nid in nids},
+        [],
+        np.zeros((0, 1), dtype=np.float32),
+        [],
+    )
+    return len(nids)

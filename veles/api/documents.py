@@ -5,6 +5,11 @@ POST /v1/documents        - multipart (file + опциональные title, gr
                             создаёт джоб, ответ 202.
 GET /v1/documents/jobs    - список своих джобов (админ - все).
 GET /v1/documents/jobs/{id} - статус queued/running/done/failed с причиной.
+DELETE /v1/documents/{id} - удаление документа целиком (K10): владелец
+                            (user:<uid> в access_groups) или админ, чужой -
+                            404 неотличимый; канон (все ревизии и assets) -
+                            в trash, L0 удаляется, узлы выводятся из поиска
+                            сразу (tombstone).
 
 Личность и группы - только через identity фасада (инвариант 5, тот же шов,
 что у query/chat): документ пользователя несёт личную группу user:<uid>,
@@ -30,6 +35,7 @@ from ..ingest.queue import (
     QueueCapacityExceeded,
     QuotaExceeded,
     check_quota,
+    discard_l0_file,
     quota_free_bytes,
     quota_limits,
     safe_filename,
@@ -307,3 +313,80 @@ def job_status(request: Request, job_id: str, authorization: str = Header(defaul
     if not ident.admin and record.get("user_id") != ident.user_id:
         raise HTTPException(status_code=404, detail="задание не найдено")
     return record
+
+
+@router.delete("/{document_id:path}")
+def delete_document(
+    request: Request, document_id: str, authorization: str = Header(default=""),
+) -> dict:
+    """Удаление документа целиком (K10): владелец документа (его user:<uid> в
+    access_groups) или админ; чужой и несуществующий - один и тот же 404
+    (перечень документов не палится). Член серверной группы с правом ЧТЕНИЯ
+    удалять не может - удаление строже чтения, как в брифе.
+
+    Физика: канон (doc_dir со всеми revision-r*/ и assets) переезжает в
+    trash/<timestamp>-<id>/ (не безвозвратно, восстановление вручную админом),
+    L0 удаляется, узлы выводятся из живого поиска СРАЗУ - tombstone в бандле +
+    overlay-патч для рестарта (см. veles/indexing/overlay.py). Событие delete -
+    в ingest-audit.jsonl.
+
+    Синхронный def: fs-операции уходят в тредпул, событийный цикл не блокируется.
+    Гонка с идущим джобом ингеста того же document_id не закрывается (очередь
+    последовательная, удаление - ручная операция инженера; повторный DELETE
+    снимет и результат гонки).
+    """
+    import logging
+
+    from .. import config
+    from ..canonical.store import delete_document as store_delete
+    from ..canonical.store import find_document_manifest
+    from ..indexing.overlay import tombstone_document
+
+    ident = _identity(request, authorization)
+
+    manifest = find_document_manifest(document_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="документ не найден")
+    doc_groups = set(manifest.get("access_groups") or [])
+    # тот же взгляд на «админа», что у чтения (_visible_by_groups): flag admin
+    # или wildcard "*" в группах; static-владелец - admin=True
+    if not (ident.admin or "*" in ident.groups or f"user:{ident.user_id}" in doc_groups):
+        raise HTTPException(status_code=404, detail="документ не найден")
+
+    info = store_delete(document_id, by=ident.user_id or "owner")
+    if info is None:  # гонка: манифест видели, канон исчез - неотличимый 404
+        raise HTTPException(status_code=404, detail="документ не найден")
+
+    discard_l0_file(document_id)
+
+    pipeline = None
+    try:
+        pipeline = _ctx(request)["pipeline_fn"]()
+    except Exception:  # noqa: BLE001 - нет индекса: tombstone соберётся с диска
+        pass
+    nodes = tombstone_document(
+        config.INDEX_DIR, document_id,
+        bundle=pipeline.bundle if pipeline is not None else None,
+    )
+    if pipeline is not None:
+        # decide(): удалённый заголовок больше не «известный документ», если его
+        # не несёт ни один живой узел
+        title = (info.get("title") or "").strip()
+        if title and not any(
+            m.get("title") == title and m.get("status") != "deleted"
+            for m in pipeline.bundle.node_meta.values()
+        ):
+            pipeline.doc_titles.discard(title)
+
+    if nodes == 0 and (config.INDEX_DIR / "meta.json").exists():
+        logging.getLogger("veles.api.documents").warning(
+            "delete %s: узлов в индексе не найдено (индекс без документа?)",
+            document_id,
+        )
+    return {
+        "status": "deleted",
+        "document_id": document_id,
+        "nodes": nodes,
+        "revisions": info["revisions"],
+        "trash": info["trash"],
+    }

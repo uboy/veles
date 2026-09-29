@@ -159,6 +159,47 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_delete(args: argparse.Namespace) -> int:
+    """Удаление документа (K10): канон (все ревизии и assets) -> trash, L0 -
+    за ним, узлы - tombstone в индексе (overlay: живой фасад закроет документ
+    после рестарта). Инженерный путь - тот же код удаления, что у DELETE
+    /v1/documents (store.delete_document + tombstone_document); без --yes
+    только показывает, что будет удалено."""
+    import os
+
+    from .canonical.store import delete_document, find_document_manifest, trash_root
+    from .indexing.overlay import tombstone_document
+    from .ingest.queue import discard_l0_file
+
+    manifest = find_document_manifest(args.document_id)
+    if manifest is None:
+        print(f"документ не найден: {args.document_id}")
+        return 1
+    if not args.yes:
+        print(f"будет удалён документ: {args.document_id}"
+              f" ({manifest.get('title') or 'без названия'},"
+              f" ревизия {manifest.get('revision_id') or 'r1'})")
+        print("канон со всеми ревизиями и assets переедет в trash, L0 будет удалён,")
+        print("узлы исчезнут из поиска. Подтвердите: --yes")
+        return 1
+    info = delete_document(args.document_id, by=os.environ.get("VELES_INGESTED_BY", "").strip() or "cli")
+    if info is None:  # манифест видели, канон исчез (гонка)
+        print(f"документ не найден: {args.document_id}")
+        return 1
+    l0_removed = discard_l0_file(args.document_id)
+    nodes = tombstone_document(INDEX_DIR, args.document_id)
+    print(f"удалён: {args.document_id} (ревизии: {', '.join(info['revisions'])})")
+    print(f"канон в корзине: {trash_root() / info['trash'][0]}")
+    print(f"L0: {'удалён' if l0_removed else 'не было'}")
+    if nodes:
+        print(f"узлов выведено из индекса: {nodes} (tombstone в overlay);"
+              " работающий фасад закроет документ после рестарта")
+    else:
+        print("узлов в индексе не найдено (индекс без документа - ок)"
+              if (INDEX_DIR / "meta.json").exists() else "индекс не собран - tombstone не нужен")
+    return 0
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     import os
 
@@ -218,6 +259,11 @@ def main() -> int:
     p.set_defaults(func=cmd_ask)
 
     sub.add_parser("status", help="состояние корпуса/канона/индекса").set_defaults(func=cmd_status)
+
+    p = sub.add_parser("delete", help="удалить документ: канон -> trash, L0, tombstone узлов")
+    p.add_argument("document_id", help="идентификатор документа (как в цитатах/source-ссылках)")
+    p.add_argument("--yes", action="store_true", help="удалить без показа плана")
+    p.set_defaults(func=cmd_delete)
 
     args = ap.parse_args()
     return args.func(args)
