@@ -3,6 +3,37 @@
 Один архив - рабочая установка. Распаковали, запустили `install.sh`, ответили на
 вопросы, проверили `verify-install.sh`. Удаляет всё `uninstall.sh`.
 
+## Демо за 5 минут (install --demo)
+
+`--demo` разворачивает базу, уже наполненную демо-контентом: 5 документов
+фикшн-компании ООО «Ромашка» (отпуска, командировки, ИТ-доступы, закупки,
+FAQ поддержки) с готовым мини-индексом. Реальных данных в демо нет.
+
+```bash
+tar xzf veles-deploy-kit-<версия>.tar.gz
+cd veles-deploy-kit-<версия>/deploy/kit
+./install.sh --demo --yes          # профиль lite (CLI); ~1-3 ГБ загрузок: torch + модель
+./.venv/bin/veles ask "Сколько дней отпуска положено сотруднику?"
+```
+
+В конце установки печатаются 5 проверенных на этом индексе демо-вопросов.
+Демо-шаг 2 - свой документ: `./.venv/bin/veles add файл.txt --title "Название"`,
+после чего документ ищется сразу (`veles ask`).
+
+Профили с `--demo`: по умолчанию `lite`; `--profile personal --demo` поднимет
+фасад с уже наполненной базой; `--profile corporate --demo` скопирует демо-индекс
+в `data/` (контейнер подхватит через bind) - сам docker compose запускается
+как обычно, отдельной командой владельца на машине с docker.
+
+Важно знать: индекс несёт вектора документов, но для эмбеддинга ВОПРОСА модель
+`intfloat/multilingual-e5-small` нужна и на машине демо - при установке она
+скачивается с HuggingFace (~130 МБ, кеш `~/.cache/huggingface`); без сети
+на huggingface.co демо-вопрос не заработает. Диск для lite-демо: от 4 ГБ
+(torch в venv).
+
+Удаление демо целиком: `./uninstall.sh --purge-data` (снесёт данные, venv и .env;
+спросит дважды без `--yes`).
+
 ## Быстрый старт
 
 ```bash
@@ -22,7 +53,7 @@ cd veles-deploy-kit-<версия>/deploy/kit
 
 Общие флаги: `--profile corporate|personal|lite`, `--dir PATH` (каталог venv и данных
 для lite/personal; corporate ставит всё в каталог кита), `--dry-run`, `--yes`,
-`--with-webui`, `--with-bridge`, `--with-voxfusion`.
+`--with-webui`, `--with-bridge`, `--with-voxfusion`, `--demo` (см. «Демо за 5 минут»).
 Corporate-only: `--identity-headers` - режим личности через plain-заголовки вместо
 дефолтного jwt (см. «Безопасность corporate»).
 
@@ -78,7 +109,10 @@ find "$HOME" -maxdepth 1 -name 'veles-tracker-backup-*.tar.gz' -mtime +7 -delete
 **lite**
 
 - Linux/macOS (на Windows - `windows/install.ps1`), python 3.11+, bash 4+.
-- Диск ≥1 ГБ, портов не занимает, сети не требует (кроме pip при установке).
+- Диск ≥1 ГБ (демо: ≥4 ГБ - sentence-transformers/torch в venv), портов не
+  занимает.
+- Сеть: pip при установке; демо дополнительно тянет модель e5-small
+  (~130 МБ) с HuggingFace при установке/первом вопросе.
 
 Все профили: ключ LLM спрашивается при установке и пишется только в локальный `.env`
 (chmod 600). В архив ключи не встраиваются никогда.
@@ -279,6 +313,11 @@ open-webui в venv. Параметры: `Get-Help .\install.ps1 -Full`; снят
 deploy/kit/
   install.sh uninstall.sh verify-install.sh   # установка, снятие, самопроверка
   make-kit.sh                                 # сборка архива из git HEAD
+  demo/                                       # демо в один клик (--demo)
+    documents/                                #   5 фикшн-документов (ООО «Ромашка»)
+    index/ canonical/                         #   готовый мини-индекс + канон
+    questions.txt                             #   5 проверенных демо-вопросов
+    build-demo-index.sh                       #   пересборка мини-индекса
   docker-compose.yml Dockerfile Dockerfile.bridge
   caddy/Caddyfile.example                     # шаблон reverse-proxy TLS (профиль tls)
   .env.example                                # все переменные с комментариями
