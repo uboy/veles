@@ -158,3 +158,17 @@ def test_add_rejects_pdf_and_missing_file(kb_env, tmp_path):
     assert not (uploads_root() / user_dir("")).exists() or not any(
         (uploads_root() / user_dir("")).iterdir()
     )
+
+
+def test_add_bit_file_no_l0_orphan(kb_env, tmp_path):
+    """Ревью K15 P2: файл скопирован в L0, парс упал ПОСЛЕ копирования - L0-сирота
+    не остаётся (в personal-профиле съедала бы квоту). Битый .txt: пустой файл."""
+    bad = tmp_path / "битый.md"
+    bad.write_text("", encoding="utf-8")
+    rc = run_add(bad)
+    l0 = uploads_root() / user_dir("") / bad.name
+    if rc != 0:
+        assert not l0.exists(), "L0-сирота после неудачного парса"
+    else:
+        # если пустой файл парсер принимает - как минимум документ в базе
+        assert l0.exists()

@@ -309,6 +309,9 @@ copy_demo_content() {
     if [ -f "$data_dir/index/meta.json" ]; then
         warn "существующий индекс сохранён - демо-индекс не копировался ($data_dir/index)"
     else
+        # ревью K15 P1: mkdir обязателен - cp -a src/. dst/ без созданного dst
+        # падает на coreutils 8.32 (Ubuntu 22.04 LTS), на 9.4 (24.04) работает
+        mkdir -p "$data_dir/index"
         cp -a "$SCRIPT_DIR/demo/index/." "$data_dir/index/"
         ok "демо-индекс: $data_dir/index ($(du -sh "$SCRIPT_DIR/demo/index" | awk '{print $1}'))"
     fi

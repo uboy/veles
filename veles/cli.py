@@ -193,6 +193,11 @@ def cmd_add(args: argparse.Namespace) -> int:
         # corpus_root = корень uploads: document_id = "owner/<имя>", как у фасада
         doc = TxtMdParserAdapter().parse_file(l0_path, corpus_root=uploads_root())
     except Exception as e:  # noqa: BLE001 - битый файл: человеческая причина
+        # ревью K15 P2: битый файл не оставляет L0-сироту (съедает квоту personal)
+        try:
+            l0_path.unlink()
+        except OSError:
+            pass
         print(f"не удалось разобрать документ: {e}")
         return 1
     if args.title:
