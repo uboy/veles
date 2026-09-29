@@ -11,7 +11,7 @@
 services:
   veles-facade:
     build:
-      context: ..
+      context: ../..
       dockerfile: deploy/kit/Dockerfile
     image: veles-facade:local
     restart: unless-stopped
@@ -62,7 +62,7 @@ services:
 
   telegram-bridge:
     build:
-      context: ..
+      context: ../..
       dockerfile: deploy/kit/Dockerfile.bridge
     image: veles-telegram-bridge:local
     restart: unless-stopped
