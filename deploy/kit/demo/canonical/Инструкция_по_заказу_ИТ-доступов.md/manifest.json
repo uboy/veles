@@ -1,0 +1,19 @@
+{
+  "document_id": "Инструкция по заказу ИТ-доступов.md",
+  "revision_id": "r1",
+  "title": "Инструкция по заказу ИТ-доступов",
+  "document_type": "summary",
+  "status": "current",
+  "sha256": "d72eeef6825b02008aed0d8fe1037c86f5db9cbe9672a655803e17f6a8a2f40e",
+  "parser_profile": "txt-md:0.1",
+  "access_groups": [
+    "personal"
+  ],
+  "derived_from": [
+    "onedev-vyshka:Инструкция по заказу ИТ-доступов.md"
+  ],
+  "previous_revision": null,
+  "ingested_at": "2026-09-29T18:21:46+00:00",
+  "ingested_by": "demo-build",
+  "assets": {}
+}

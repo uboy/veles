@@ -13,6 +13,8 @@
 set -euo pipefail
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# veles импортируется из корня репозитория (demo/ лежит на три уровня глубже: deploy/kit/demo)
+REPO_ROOT=$(cd "$SCRIPT_DIR/../../.." && pwd)
 PY="${VELES_PYTHON:-python3}"
 
 WORK=$(mktemp -d)
@@ -21,6 +23,7 @@ mkdir -p "$WORK/data"
 
 # VELES_DATA - временный корень: канон ляжет в $WORK/data/canonical,
 # индекс - в $WORK/data/index
+cd "$REPO_ROOT"
 VELES_DATA="$WORK/data" "$PY" - "$SCRIPT_DIR" <<'PYEOF'
 """Сборка демо-индекса: docs -> канон -> L2 (dense numpy + BM25)."""
 import shutil
