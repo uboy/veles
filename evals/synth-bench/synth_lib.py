@@ -142,16 +142,18 @@ def aggregate(results: list[dict]) -> dict:
 
     Ожидает записи вида:
       {"qid", "abstain", "answer", "latency_s", "prompt_tokens", "completion_tokens",
-       "scores": {metric: 0..2} | None (только для не-abstain), "abstain_ok": bool}
-    FAITH/CITE/COV/RU - среднее 0..2 по отвечаемым кейсам; ABST - процент
-    корректных отказов на abstain-кейсах; LAT - средняя задержка, сек; TOK - среднее
-    полное число токенов (prompt+completion) на ответ.
+       метрики ключами верхнего уровня: "faithfulness"/"citation_accuracy"/
+       "coverage"/"russian_quality" = 0..2 | None (только не-abstain),
+       "abstain_ok": bool}
+    FAITH/CITE/COV/RU - среднее 0..2 по отвечаемым кейсам с валидным скором;
+    ABST - процент корректных отказов на abstain-кейсах; LAT - средняя задержка,
+    сек; TOK - среднее полное число токенов (prompt+completion) на ответ.
     """
     answerable = [r for r in results if not r.get("abstain")]
     abstains = [r for r in results if r.get("abstain")]
     row: dict = {}
     for key in METRIC_KEYS:
-        vals = [r["scores"][key] for r in answerable if r.get("scores")]
+        vals = [r[key] for r in answerable if isinstance(r.get(key), int)]
         row[key] = round(statistics.mean(vals), 2) if vals else None
     row["abst_pct"] = (
         round(100.0 * sum(1 for r in abstains if r.get("abstain_ok")) / len(abstains), 1)
@@ -167,7 +169,9 @@ def aggregate(results: list[dict]) -> dict:
     row["n_total"] = len(results)
     row["n_answerable"] = len(answerable)
     row["n_abstain"] = len(abstains)
-    row["n_parse_errors"] = sum(1 for r in answerable if not r.get("scores"))
+    row["n_parse_errors"] = sum(
+        1 for r in answerable if not isinstance(r.get("faithfulness"), int)
+    )
     return row
 
 

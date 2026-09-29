@@ -172,14 +172,15 @@ def main() -> int:
     frag_by_qid = cache["questions"]
 
     rows, all_judged = [], []
-    for p in args.answers:
-        print(f"сужу {p}...", flush=True)
+    for name in args.answers:
+        path = Path(name)
+        print(f"сужу {path.name}...", flush=True)
         row, judged = judge_answers_file(
-            Path(p), golden_by_qid, frag_by_qid, base_url, model, api_key,
+            path, golden_by_qid, frag_by_qid, base_url, model, api_key,
             args.max_tokens, args.limit,
         )
         rows.append(row)
-        all_judged.append({"answers_file": p.name, "row": row, "judged": judged})
+        all_judged.append({"answers_file": path.name, "row": row, "judged": judged})
 
     table = render_table(rows)
     out = Path(args.out)

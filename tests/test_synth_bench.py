@@ -114,12 +114,16 @@ def test_build_judge_messages_includes_fragments_answer_citations():
 # ---------------------------------------------------------------- агрегация
 
 def _sample_result(abstain=False, scores=None, latency=1.0, err="", answer="x", abstain_ok=True):
-    return {
+    """Запись как их пишет judge.py: метрики - ключами верхнего уровня."""
+    r = {
         "qid": "q", "abstain": abstain, "answer": answer, "latency_s": latency,
-        "prompt_tokens": 100, "completion_tokens": 50, "scores": scores,
+        "prompt_tokens": 100, "completion_tokens": 50,
         "abstain_ok": abstain_ok if abstain else False,
         "error": err,
     }
+    for k, v in (scores or {}).items():
+        r[k] = v
+    return r
 
 
 def test_aggregate_full_run():
