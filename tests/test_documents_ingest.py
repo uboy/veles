@@ -25,6 +25,7 @@ from veles.canonical.store import _doc_dir, save_document
 from veles.config import EMBED_DIM, EMBED_MODEL
 from veles.ingest.queue import (
     IngestQueue,
+    QueueCapacityExceeded,
     QuotaExceeded,
     check_quota,
     slugify_title,
@@ -610,6 +611,108 @@ def test_done_job_survives_facade_restart(kb_env) -> None:
     client2 = make_static_client(kb_env["bundle"])
     r = client2.get(f"/v1/documents/jobs/{job_id}")
     assert r.status_code == 200 and r.json()["status"] == "done"
+
+
+# --------------------------------------------- кап очереди и ротация журнала (K8)
+
+
+class NoWorkerQueue(IngestQueue):
+    """Очередь без воркера: джобы остаются queued - кап достижим в тесте
+    (живой воркер разбирает джобы быстрее, чем их можно наставить)."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs["start_worker"] = False
+        super().__init__(*args, **kwargs)
+
+
+def test_queue_cap_rejects_429(kb_env, monkeypatch) -> None:
+    """K8: queued-джобов больше VELES_INGEST_QUEUE_MAX - submit отказывает
+    (429, «очередь занята»); 0 = лимит снят."""
+    monkeypatch.setenv("VELES_INGEST_QUEUE_MAX", "2")
+    pipeline = VelesPipeline(kb_env["bundle"], HashingEmbedder(), llm=None)
+    q = IngestQueue(pipeline_fn=lambda: pipeline, start_worker=False)
+    for i in range(2):
+        q.submit(user_id="", filename=f"f{i}.md", title=f"Т{i}",
+                 document_id=f"{user_dir('')}/f{i}.md", size_bytes=1,
+                 groups=["personal"])
+    with pytest.raises(QueueCapacityExceeded) as e:
+        q.submit(user_id="", filename="третий.md", title="Т3",
+                 document_id=f"{user_dir('')}/третий.md", size_bytes=1,
+                 groups=["personal"])
+    assert e.value.status_code == 429
+    assert "очередь занята" in e.value.detail
+
+    monkeypatch.setenv("VELES_INGEST_QUEUE_MAX", "0")
+    q.submit(user_id="", filename="третий.md", title="Т3",
+             document_id=f"{user_dir('')}/третий.md", size_bytes=1,
+             groups=["personal"])  # без лимита проходит
+
+
+def test_queue_cap_endpoint_429_and_l0_removed(kb_env, monkeypatch) -> None:
+    """K8: фасад отвечает 429 текстом очереди; L0 перезаписанного запроса
+    удалён (отказ очереди не съедает квоту навсегда), джоба нет."""
+    monkeypatch.setenv("VELES_INGEST_QUEUE_MAX", "1")
+    monkeypatch.setattr("veles.api.documents.IngestQueue", NoWorkerQueue)
+    client = make_static_client(kb_env["bundle"])
+    first = upload_json(client, DOC_V1)
+    assert first.status_code == 202
+    second = upload_json(client, "Другой текст про командировки", title="Командировки")
+    assert second.status_code == 429
+    assert "очередь занята" in second.json()["detail"]
+    assert not (uploads_root() / user_dir("") / "Командировки.md").exists()
+    assert len(client.get("/v1/documents/jobs").json()["jobs"]) == 1
+
+
+def test_ledger_rotation_keeps_two_files(kb_env, monkeypatch) -> None:
+    """K8: журнал, достигший порога, переименовывается в .1 (прежний .1
+    заменяется), активный пересоздаётся следующей записью."""
+    monkeypatch.setattr("veles.ingest.queue._LEDGER_ROTATE_BYTES", 1)
+    pipeline = VelesPipeline(kb_env["bundle"], HashingEmbedder(), llm=None)
+    q = IngestQueue(pipeline_fn=lambda: pipeline, start_worker=False)
+    path = uploads_root() / "ingest-jobs.jsonl"
+
+    first = q.submit(user_id="", filename="a.md", title="А",
+                     document_id=f"{user_dir('')}/a.md", size_bytes=1,
+                     groups=["personal"])
+    assert path.exists() and first.job_id in path.read_text(encoding="utf-8")
+    assert not path.with_name("ingest-jobs.jsonl.1").exists()  # пустой не ротируется
+
+    second = q.submit(user_id="", filename="b.md", title="Б",
+                      document_id=f"{user_dir('')}/b.md", size_bytes=1,
+                      groups=["personal"])
+    rotated = path.with_name("ingest-jobs.jsonl.1")
+    assert rotated.exists()
+    assert first.job_id in rotated.read_text(encoding="utf-8")
+    active = path.read_text(encoding="utf-8")
+    assert second.job_id in active and first.job_id not in active
+
+    # третья запись: прежний .1 заменяется, активный снова только с последней
+    third = q.submit(user_id="", filename="c.md", title="В",
+                     document_id=f"{user_dir('')}/c.md", size_bytes=1,
+                     groups=["personal"])
+    assert second.job_id in rotated.read_text(encoding="utf-8")
+    active = path.read_text(encoding="utf-8")
+    assert third.job_id in active and second.job_id not in active
+
+
+def test_overlay_write_cleans_tmp_orphans(kb_env) -> None:
+    """K8-бонус: tmp-сирота прошлого аварийного write убирается в начале
+    записи, а сам overlay после записи читается (fsync поведение не меняет)."""
+    import numpy as _np
+
+    from veles.indexing.overlay import append_overlay, read_overlay
+
+    (kb_env["index_dir"] / "overlay.tmp999.npz").write_bytes(b"orphan")
+    append_overlay(
+        kb_env["index_dir"],
+        {"nv-orphan": {"document_id": "d", "title": "т", "status": "current"}},
+        {}, ["nv-orphan"], _np.zeros((1, HASH_DIM), dtype=_np.float32),
+        [("nv-orphan", "текст")],
+    )
+    assert not (kb_env["index_dir"] / "overlay.tmp999.npz").exists()
+    assert not list(kb_env["index_dir"].glob("overlay.tmp*.npz"))
+    data = read_overlay(kb_env["index_dir"])
+    assert data is not None and data["ids"] == ["nv-orphan"]
 
 
 # ---------------------------------------------------------- форматные негативы

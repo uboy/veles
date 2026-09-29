@@ -165,6 +165,14 @@ def append_overlay(index_dir: Path, new_nodes: dict, patches: dict,
     }
     # tmp-имя обязано кончаться на .npz: np.savez иначе дописывает расширение
     tmp = index_dir / f"overlay.tmp{os.getpid()}.npz"
+    # сирота прошлого аварийного write (обрыв между savez и replace) - мусор
+    # рядом с индексом: свои tmp-файлы оверлея чистим в начале записи (записей
+    # одновременно не бывает - очередь ингеста последовательная, K8)
+    for orphan in index_dir.glob("overlay.tmp*.npz"):
+        try:
+            orphan.unlink()
+        except OSError as e:  # noqa: BLE001 - чистка не должна ломать запись
+            logger.warning("tmp-сирота оверлея %s не удалена: %s", orphan, e)
     np.savez(
         tmp,
         meta=np.frombuffer(json.dumps(meta, ensure_ascii=False).encode("utf-8"), dtype=np.uint8),
@@ -172,4 +180,10 @@ def append_overlay(index_dir: Path, new_nodes: dict, patches: dict,
         ids=np.array(ids, dtype=str) if ids else np.empty(0, dtype=str),
         matrix=matrix.astype(np.float32),
     )
+    # fsync перед replace (K8): без сброса страниц файла на диск сбой питания
+    # между savez и replace оставляет replace-нутый файл пустым/битым -
+    # overlay молча пропускается и загрузки доедут только с пересборкой.
+    # r+b: на Windows os.fsync требует дескриптор с правом записи
+    with open(tmp, "r+b") as f:
+        os.fsync(f.fileno())
     tmp.replace(overlay_path(index_dir))

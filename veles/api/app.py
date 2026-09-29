@@ -62,10 +62,15 @@ def asset_url(document_id: str, name: str, token: str) -> str:
 
 
 def source_url(document_id: str, node_version_id: str, token: str) -> str:
-    """Ссылка на источник для цитаты (открывается в отдельной вкладке)."""
+    """Ссылка на источник для цитаты (открывается в отдельной вкладке).
+
+    Фрагмент #n-<node_version_id> - скролл браузера к анкеру HTML-сборки
+    (инлайн-скрипта на странице нет, CSP без unsafe-inline); сервер фрагмент
+    не видит, в подпись он не входит."""
     q = f"token={quote(token)}&node={quote(node_version_id)}" if token else (
         f"node={quote(node_version_id)}")
-    return f"{VELES_PUBLIC_URL}/v1/source/{quote(document_id, safe=chr(47))}?{q}"
+    return (f"{VELES_PUBLIC_URL}/v1/source/{quote(document_id, safe=chr(47))}"
+            f"?{q}#n-{quote(node_version_id)}")
 
 
 def signed_asset_url(secret: str, document_id: str, name: str, exp: int) -> str:
@@ -75,10 +80,28 @@ def signed_asset_url(secret: str, document_id: str, name: str, exp: int) -> str:
 
 
 def signed_source_url(secret: str, document_id: str, node_version_id: str, exp: int) -> str:
-    """Подписанная ссылка вместо token= в query: sig от document_id|node|exp."""
+    """Подписанная ссылка вместо token= в query: sig от document_id|node|exp
+    (фрагмент #n-<node_version_id> в подпись не входит - сервер его не видит)."""
     sig = link_sig(secret, document_id, node_version_id, exp)
     return (f"{VELES_PUBLIC_URL}/v1/source/{quote(document_id, safe=chr(47))}"
-            f"?node={quote(node_version_id)}&exp={exp}&sig={sig}")
+            f"?node={quote(node_version_id)}&exp={exp}&sig={sig}"
+            f"#n-{quote(node_version_id)}")
+
+
+def html_security_headers() -> dict[str, str]:
+    """Единый набор security-заголовков HTML-страниц фасада (/v1/source,
+    /tracker; K8). CSP строгий: на страницах нет инлайн-скриптов/стилей -
+    скролл к узлу делает браузер по #fragment, переходы по ссылкам CSP не
+    ограничивает. JSON-ответы и ошибки не трогаются."""
+    return {
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY",
+        "Referrer-Policy": "no-referrer",
+        "Content-Security-Policy": (
+            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; "
+            "form-action 'none'"
+        ),
+    }
 
 
 class QueryRequest(pydantic.BaseModel):
@@ -463,7 +486,8 @@ def create_app(
                     return FileResponse(f, media_type="image/png", filename=name)
         raise HTTPException(status_code=404, detail="актив не найден")
 
-    @app.get("/v1/source/{document_id:path}")
+    # GET + HEAD (K8): клиенты пробуют curl -I / healthcheck'и - без HEAD был 405
+    @app.api_route("/v1/source/{document_id:path}", methods=["GET", "HEAD"])
     def source_view(
         request: Request,
         document_id: str,
@@ -479,8 +503,8 @@ def create_app(
         личности - ссылки из цитат не могут передавать заголовки. Доступ по группам
         манифеста (P0 ревью K4): чужому - 404, неотличимый от несуществующего."""
         ident = _link_identity(request, authorization, token, document_id, node, exp, sig)
-        # node попадает в инлайн-скрипт скролла: только символы, безопасные для
-        # JS-строки и HTML - инъекция через query невозможна (ревью K6 P2-3)
+        # node входит в сообщение HMAC-подписи и ссылается на анкер страницы:
+        # только символы, безопасные для HTML-атрибута id (ревью K6 P2-3)
         if node and not re.fullmatch(r"[\w.-]+", node):
             raise HTTPException(status_code=400, detail="bad node")
 
@@ -524,7 +548,6 @@ def create_app(
         for line in doc["_nodes_path"].read_text(encoding="utf-8").splitlines():
             if line.strip():
                 nodes.append(_json.loads(line))
-        anchor = f'n-{node}' if node else ""
         esc = _html.escape
         title = esc(doc.get('title', document_id))
         parts = [
@@ -545,27 +568,16 @@ def create_app(
                 continue
             heading = " > ".join(esc(h) for h in nd.get("heading_path") or [])
             parts.append(
+                # анкер для скролла по #fragment из ссылок цитат (K8):
+                # браузер скроллит сам, инлайн-скрипта на странице нет
                 f"<a id='n-{nd['node_version_id']}'></a>"
                 f"<p><b>{heading}</b><br>{esc(nd.get('text', ''))}</p>"
             )
-        parts.append(
-            f"<script>var a = document.getElementById('{anchor}');"
-            "if (a) a.scrollIntoView({block: 'start'});</script></body></html>"
-        )
-        # security-заголовки как на /tracker (ревью K6 P2-3); CSP допускает
-        # единственный инлайн-скрипт страницы - скролл к анкеру node (node
-        # провалидирован выше, инъекции нет); вынос скрипта/#fragment -
-        # отдельная задача, не цель этого фикса
-        html_headers = {
-            "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",
-            "Referrer-Policy": "no-referrer",
-            "Content-Security-Policy": (
-                "default-src 'none'; script-src 'unsafe-inline'; "
-                "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-            ),
-        }
-        return HTMLResponse("\n".join(parts), status_code=200, headers=html_headers)
+        parts.append("</body></html>")
+        # security-заголовки - общая функция с /tracker (K8); CSP строгий,
+        # без script-src 'unsafe-inline' (скролл убран в пользу #fragment)
+        return HTMLResponse("\n".join(parts), status_code=200,
+                            headers=html_security_headers())
 
     def _index_loaded() -> bool:
         # честная готовность (K6): pipeline создаётся только после успешной
@@ -811,19 +823,10 @@ def create_app(
               ["<p><i>Пока нет данных. Отправьте боту /task текст - задача появится здесь.</i></p>"]),
             "</body></html>",
         ]
-        # security-заголовки HTML-страницы трекера (K6); JSON-ответы и ошибки
-        # не трогаются. CSP строгий без unsafe-inline: на странице нет
+        # security-заголовки HTML-страницы трекера (K6) - общая функция с
+        # /v1/source (K8); CSP строгий без unsafe-inline: на странице нет
         # инлайн-стилей/скриптов, а переходы по ссылкам CSP не ограничивает.
-        html_headers = {
-            "X-Content-Type-Options": "nosniff",
-            "X-Frame-Options": "DENY",
-            "Referrer-Policy": "no-referrer",
-            "Content-Security-Policy": (
-                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; "
-                "form-action 'none'"
-            ),
-        }
-        return HTMLResponse(NEWLINE.join(html), headers=html_headers)
+        return HTMLResponse(NEWLINE.join(html), headers=html_security_headers())
 
     @app.get("/tracker/file/{kind}/{name}")
     def tracker_file(

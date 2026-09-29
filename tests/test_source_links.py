@@ -9,7 +9,13 @@ from fastapi.testclient import TestClient
 
 from tests.test_api import make_pipeline
 from veles.api import app as app_module
-from veles.api.app import create_app, render_chat_content
+from veles.api.app import (
+    create_app,
+    link_sig,
+    render_chat_content,
+    signed_source_url,
+    source_url,
+)
 
 
 def _make_canon(tmp_path, title="Тестовый документ", heading="Раздел 1",
@@ -83,9 +89,29 @@ def test_citations_and_footnotes_are_links():
         ],
     }
     out = render_chat_content(result, token="tk")
-    assert "](http://127.0.0.1:8400/v1/source/lectures/x.txt?token=tk&node=nv1)" in out
-    assert "](http://127.0.0.1:8400/v1/source/lectures/k.txt?token=tk&node=nv2)" in out
+    assert "](http://127.0.0.1:8400/v1/source/lectures/x.txt?token=tk&node=nv1#n-nv1)" in out
+    assert "](http://127.0.0.1:8400/v1/source/lectures/k.txt?token=tk&node=nv2#n-nv2)" in out
     assert out.count("](http://") == 4  # 2 сноски + 2 строки источников
+
+
+def test_signed_citation_link_keeps_sig_and_adds_fragment():
+    """Подписанная ссылка (identity-режимы): sig в query не меняется, фрагмент
+    добавляется после sig - сервер фрагмент не видит, подпись валидна."""
+    secret, doc, node, exp = "s", "lectures/x.txt", "nv1", 1234567890
+    url = signed_source_url(secret, doc, node, exp)
+    assert url.endswith(f"?node=nv1&exp={exp}&sig={link_sig(secret, doc, node, exp)}#n-nv1")
+
+
+def test_citation_fragment_matches_render_anchor(tmp_path, monkeypatch):
+    """K8: фрагмент #n-<node_version_id> из собранной цитаты совпадает с якорем
+    id='n-<...>' в HTML-рендере /v1/source - браузер скроллит сам (корень без
+    якоря: в индекс и рендер он не идёт)."""
+    _make_canon(tmp_path)
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    client = TestClient(create_app(pipeline=None, api_token="t"))
+    page = client.get("/v1/source/lectures/x.txt", params={"token": "t"}).text
+    fragment = source_url("lectures/x.txt", "nv1", "t").rsplit("#", 1)[1]
+    assert f"id='{fragment}'" in page
 
 
 def test_source_shows_ingest_metadata(tmp_path, monkeypatch):
@@ -119,7 +145,7 @@ def test_source_html_escapes_document_texts(tmp_path, monkeypatch):
 
 def test_source_rejects_malformed_node(tmp_path, monkeypatch):
     """node валидируется строго ([\\w.-]+): JS-инъекция через query -> 400;
-    валидный node по-прежнему работает (скролл к анкеру)."""
+    валидный node по-прежнему работает (фрагмент ссылок цитат ведёт на анкер)."""
     _make_canon(tmp_path)
     monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
     client = TestClient(create_app(pipeline=None, api_token="t"))
@@ -132,8 +158,9 @@ def test_source_rejects_malformed_node(tmp_path, monkeypatch):
 
 
 def test_source_security_headers(tmp_path, monkeypatch):
-    """Страница источника несёт тот же набор заголовков, что /tracker; CSP
-    допускает только инлайн-скрипт скролла (script-src 'unsafe-inline')."""
+    """Страница источника несёт тот же набор заголовков, что /tracker (общая
+    функция, K8); CSP строгий БЕЗ unsafe-inline - инлайн-скрипта скролла нет,
+    к анкеру ведёт #fragment в самих ссылках."""
     _make_canon(tmp_path)
     monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
     client = TestClient(create_app(pipeline=None, api_token="t"))
@@ -144,5 +171,22 @@ def test_source_security_headers(tmp_path, monkeypatch):
     assert r.headers["Referrer-Policy"] == "no-referrer"
     csp = r.headers["Content-Security-Policy"]
     assert "default-src 'none'" in csp
-    assert "script-src 'unsafe-inline'" in csp
+    assert "unsafe-inline" not in csp
+    assert "script-src" not in csp
     assert "frame-ancestors 'none'" in csp
+    assert "<script" not in r.text  # инлайн-скрипт скролла убран совсем
+
+
+def test_source_head_supported(tmp_path, monkeypatch):
+    """K8: HEAD на /v1/source - 200 с теми же заголовками (раньше маршрут был
+    только GET и curl -I получал 405)."""
+    _make_canon(tmp_path)
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    client = TestClient(create_app(pipeline=None, api_token="t"))
+    r = client.head("/v1/source/lectures/x.txt", params={"token": "t"})
+    assert r.status_code == 200
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert "default-src 'none'" in r.headers["Content-Security-Policy"]
+    # несуществующий документ под HEAD - тот же 404, что под GET
+    assert client.head("/v1/source/lectures/none.txt",
+                       params={"token": "t"}).status_code == 404

@@ -27,6 +27,7 @@ from starlette.concurrency import run_in_threadpool
 from ..ingest.queue import (
     ALLOWED_EXTENSIONS,
     IngestQueue,
+    QueueCapacityExceeded,
     QuotaExceeded,
     check_quota,
     quota_free_bytes,
@@ -243,19 +244,41 @@ async def upload_document(
             l0_path.parent.mkdir(parents=True, exist_ok=True)
             l0_path.write_bytes(raw)
 
+    # K8 ревью P2: ранний (ненадёжный) гейт капа ДО записи L0 - перезапись L0
+    # существующего документа необратима, а авторитетный отказ после записи
+    # удаляет уже перезаписанный файл. Гонку с отпустившимся капом закрывает
+    # авторитетная проверка в submit (ниже, с чисткой L0).
+    busy, max_queued = queue.at_capacity()
+    if busy:
+        raise HTTPException(
+            status_code=429,
+            detail=f"очередь занята, повторите позже (лимит {max_queued}, "
+                   "VELES_INGEST_QUEUE_MAX)",
+        )
+
     try:
         await run_in_threadpool(_quota_and_write)
     except QuotaExceeded as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
 
-    job = queue.submit(
-        user_id=ident.user_id,
-        filename=filename,
-        title=title,
-        document_id=document_id,
-        size_bytes=len(raw),
-        groups=_document_groups(ident, groups_param, group_param, state["identity_mode"]),
-    )
+    try:
+        # K8: кап очереди - тот же контракт отказа, что квоты (detail из исключения)
+        job = queue.submit(
+            user_id=ident.user_id,
+            filename=filename,
+            title=title,
+            document_id=document_id,
+            size_bytes=len(raw),
+            groups=_document_groups(ident, groups_param, group_param, state["identity_mode"]),
+        )
+    except QueueCapacityExceeded as e:
+        # джоба нет и не будет - L0 этой загрузки не оставляем (как _discard_l0
+        # у упавшего джоба): отказ очереди не съедает квоту навсегда
+        try:
+            l0_path.unlink()
+        except OSError:
+            pass
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
     return JSONResponse(
         status_code=202,
         content={"job_id": job.job_id, "status": job.status, "document_id": document_id},
