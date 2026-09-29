@@ -84,13 +84,10 @@ def write_groups(data, groups: list[dict]) -> None:
 
 
 def upload(client: TestClient, *, text: str = DOC_V1, title: str = DOC_TITLE,
-           group: str | None = None, access_groups: str | None = None,
-           headers: dict | None = None):
+           group: str | None = None, headers: dict | None = None):
     payload: dict = {"text": text, "title": title}
     if group is not None:
         payload["group"] = group
-    if access_groups is not None:
-        payload["access_groups"] = access_groups
     return client.post("/v1/documents", json=payload, headers=headers or {})
 
 
@@ -255,15 +252,25 @@ def test_upload_unknown_group_400_no_job(headers_env) -> None:
 
 def test_upload_group_and_access_groups_conflict_400(headers_env) -> None:
     """Ревью K7: одновременные group= и access_groups= - 400 (раньше access_groups
-    молча терялся). У админа каждый параметр по отдельности работает."""
+    молча терялся). Multipart: только он читает access_groups. У админа каждый
+    параметр по отдельности работает."""
     client = make_app(headers_env["bundle"])
     boss_h = {"X-OpenWebUI-User-Email": "boss@corp.ru", "X-OpenWebUI-User-Name": "boss"}
-    r = upload(client, group="test-dept", headers=boss_h, access_groups="legal,finance")
+
+    def mp(data: dict):
+        return client.post(
+            "/v1/documents",
+            files={"file": (DOC_SLUG + ".md", DOC_V1.encode("utf-8"), "text/markdown")},
+            data=data,
+            headers=boss_h,
+        )
+
+    r = mp({"title": DOC_TITLE, "group": "test-dept", "access_groups": "legal,finance"})
     assert r.status_code == 400
     assert "одно" in r.json()["detail"]
     assert client.get("/v1/documents/jobs", headers=boss_h).json()["jobs"] == []
 
-    r2 = upload(client, access_groups="legal,finance", headers=boss_h)
+    r2 = mp({"title": DOC_TITLE, "access_groups": "legal,finance"})
     assert r2.status_code == 202  # админский access_groups сам по себе жив
 
 
