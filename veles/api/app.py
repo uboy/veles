@@ -2,7 +2,7 @@
 
 POST /v1/knowledge/query  - native API (decision, answer, citations, diagnostics)
 POST /v1/chat/completions - совместимость для Open WebUI и других клиентов
-GET  /healthz
+GET  /healthz /readyz (живость / готовность индекса, K6)
 
 Запуск: python -m veles serve [--host] [--port]
 Личность запроса (K1): VELES_IDENTITY_MODE=static (дефолт, один владелец,
@@ -40,6 +40,7 @@ from ..policy.identity import (
 )
 from ..retrieval.retriever import hybrid_search
 from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
+from .ratelimit import install_rate_limit
 
 EMBED_DIM = 384
 EMBED_MODEL = "intfloat/multilingual-e5-small"
@@ -311,6 +312,8 @@ def create_app(
         yield
 
     app = FastAPI(title="Veles Knowledge API", version="0.4.0", lifespan=lifespan)
+    # rate-limit фасада (K6): скользящее окно per-identity/per-token (VELES_RATE_LIMIT_RPM)
+    install_rate_limit(app, state)
 
     def _auth(authorization: str) -> None:
         token = state["token"]
@@ -433,6 +436,12 @@ def create_app(
         подписанная ссылка exp+sig (sig от document_id|node|exp) или заголовки
         личности - ссылки из цитат не могут передавать заголовки."""
         _link_identity(request, authorization, token, document_id, node, exp, sig)
+        # node попадает в инлайн-скрипт скролла: только символы, безопасные для
+        # JS-строки и HTML - инъекция через query невозможна (ревью K6 P2-3)
+        if node and not re.fullmatch(r"[\w.-]+", node):
+            raise HTTPException(status_code=400, detail="bad node")
+
+        import html as _html
 
         from ..canonical.store import _doc_dir
 
@@ -469,33 +478,69 @@ def create_app(
             if line.strip():
                 nodes.append(_json.loads(line))
         anchor = f'n-{node}' if node else ""
+        esc = _html.escape
+        title = esc(doc.get('title', document_id))
         parts = [
             "<!doctype html><html><head><meta charset='utf-8'>",
-            f"<title>{doc.get('title', document_id)}</title></head><body>",
-            f"<h1>{doc.get('title', document_id)}</h1>",
-            f"<p><i>{document_id} · {doc.get('parser_profile', '')} · "
+            # тексты документа и document_id (он из URL) экранируются -
+            # reflect-XSS через манифест/узлы/путь (ревью K6 P2-3)
+            f"<title>{title}</title></head><body>",
+            f"<h1>{title}</h1>",
+            f"<p><i>{esc(document_id)} · {esc(doc.get('parser_profile', ''))} · "
             f"фрагментов: {len(nodes)}</i></p>",
             "<p><small>загружен: "
-            f"{doc.get('ingested_at') or 'дата не зафиксирована'}"
-            + (f" · {doc['ingested_by']}" if doc.get("ingested_by") else "")
+            f"{esc(doc.get('ingested_at') or 'дата не зафиксирована')}"
+            + (f" · {esc(doc['ingested_by'])}" if doc.get("ingested_by") else "")
             + "</small></p>",
         ]
         for nd in nodes:
             if nd.get("node_type") == "root":
                 continue
+            heading = " > ".join(esc(h) for h in nd.get("heading_path") or [])
             parts.append(
                 f"<a id='n-{nd['node_version_id']}'></a>"
-                f"<p><b>{' > '.join(nd.get('heading_path') or [])}</b><br>{nd.get('text', '')}</p>"
+                f"<p><b>{heading}</b><br>{esc(nd.get('text', ''))}</p>"
             )
         parts.append(
             f"<script>var a = document.getElementById('{anchor}');"
             "if (a) a.scrollIntoView({block: 'start'});</script></body></html>"
         )
-        return HTMLResponse("\n".join(parts), status_code=200)
+        # security-заголовки как на /tracker (ревью K6 P2-3); CSP допускает
+        # единственный инлайн-скрипт страницы - скролл к анкеру node (node
+        # провалидирован выше, инъекции нет); вынос скрипта/#fragment -
+        # отдельная задача, не цель этого фикса
+        html_headers = {
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": (
+                "default-src 'none'; script-src 'unsafe-inline'; "
+                "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+            ),
+        }
+        return HTMLResponse("\n".join(parts), status_code=200, headers=html_headers)
+
+    def _index_loaded() -> bool:
+        # честная готовность (K6): pipeline создаётся только после успешной
+        # load_index() в _pipeline() - до неё (упавший warmup, нет индекса)
+        # /readyz обязан быть 503, а /healthz оставаться живостью.
+        # Без лока (ревью K6 P1-1): чтение dict атомарно под GIL; лок держится
+        # минуты на загрузке индекса - заблокированные /healthz//readyz роняют
+        # docker healthcheck (timeout 3s) и старт open-webui (service_healthy)
+        return state.get("pipeline") is not None
 
     @app.get("/healthz")
     def healthz() -> dict:
-        return {"status": "ok", "ts": time.time()}
+        """Liveness: процесс жив (проба systemd/monitoring). Готовность индекса -
+        отдельное поле index_loaded и эндпоинт /readyz (K6)."""
+        return {"status": "ok", "ts": time.time(), "index_loaded": _index_loaded()}
+
+    @app.get("/readyz")
+    def readyz() -> JSONResponse:
+        """Readiness: 200 только с загруженным индексом, до готовности - 503."""
+        if _index_loaded():
+            return JSONResponse({"status": "ready", "index_loaded": True})
+        return JSONResponse({"status": "starting", "index_loaded": False}, status_code=503)
 
     @app.get("/v1/models")
     def list_models(request: Request, authorization: str = Header(default="")) -> dict:
@@ -629,7 +674,7 @@ def create_app(
             },
         })
 
-    @app.get("/tracker")
+    @app.api_route("/tracker", methods=["GET", "HEAD"])
     def tracker_page(
         request: Request, token: str = "", chat: str = "",
         authorization: str = Header(default=""),
@@ -713,7 +758,19 @@ def create_app(
               ["<p><i>Пока нет данных. Отправьте боту /task текст - задача появится здесь.</i></p>"]),
             "</body></html>",
         ]
-        return HTMLResponse(NEWLINE.join(html))
+        # security-заголовки HTML-страницы трекера (K6); JSON-ответы и ошибки
+        # не трогаются. CSP строгий без unsafe-inline: на странице нет
+        # инлайн-стилей/скриптов, а переходы по ссылкам CSP не ограничивает.
+        html_headers = {
+            "X-Content-Type-Options": "nosniff",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+            "Content-Security-Policy": (
+                "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; "
+                "form-action 'none'"
+            ),
+        }
+        return HTMLResponse(NEWLINE.join(html), headers=html_headers)
 
     @app.get("/tracker/file/{kind}/{name}")
     def tracker_file(

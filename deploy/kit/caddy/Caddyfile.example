@@ -1,0 +1,29 @@
+# Caddyfile.example - шаблон reverse-proxy с авто-TLS для corporate-профиля (K6).
+#
+# Включение:
+#   1. скопируйте в caddy/Caddyfile (рядом с docker-compose.yml);
+#   2. впишите свой домен в .env: VELES_TLS_DOMAIN=veles.example.com
+#      (домен должен указывать на этот сервер, порты 80/443 открыты -
+#       сертификат выпускается автоматически, ACME HTTP-01 через порт 80);
+#   3. для изоляции контура добавьте в .env: VELES_WEBUI_BIND=127.0.0.1
+#      (наружу хоста тогда смотрит только caddy);
+#   4. docker compose --profile tls up -d caddy
+#
+# Маршрутизация: API фасада и HTML-страницы (источники/активы/трекер - их
+# открывает браузер по ссылкам из ответов) уходят на veles-facade, остальное
+# (чат) - в Open WebUI. Сертификаты и состояние - в data/caddy (переживают
+# перезапуск; uninstall.sh --purge-data их удаляет вместе с данными).
+
+{$VELES_TLS_DOMAIN:veles.example.local} {
+	# API и HTML фасада (цитаты ведут браузер на /v1/source, /v1/asset, /tracker)
+	handle /v1/* {
+		reverse_proxy veles-facade:8400
+	}
+	handle /tracker* {
+		reverse_proxy veles-facade:8400
+	}
+	# чат - Open WebUI (websockets проксируются автоматически)
+	handle {
+		reverse_proxy open-webui:8080
+	}
+}
