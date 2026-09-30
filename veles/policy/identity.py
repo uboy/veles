@@ -55,6 +55,17 @@ def normalize_user_id(raw: str) -> str:
     return (raw or "").strip().lower()
 
 
+def validated_user_id(raw: str) -> Optional[str]:
+    """Нормализует и проверяет uid (email) из доверенного источника
+    (K16: заголовок X-Veles-On-Behalf-Of при владельческом токене).
+    None - пустой или небезопасный (обход каталогов, разделители пути):
+    такой uid не должен попадать ни в document_id, ни в каталог L0."""
+    uid = normalize_user_id(raw)
+    if not uid or _UNSAFE_USER_ID.search(uid):
+        return None
+    return uid
+
+
 def admin_emails() -> set[str]:
     """VELES_ADMIN_EMAILS - список админов через запятую (сравнение нормализованное)."""
     raw = os.environ.get("VELES_ADMIN_EMAILS", "")

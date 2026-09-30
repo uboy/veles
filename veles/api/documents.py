@@ -16,6 +16,11 @@ DELETE /v1/documents/{id} - удаление документа целиком (
 поэтому чужие загрузки невидимы в поиске и в статусах джобов; админ видит всё.
 K7: при загрузке можно выбрать серверную группу (group=<id> из GET /v1/groups)
 - документ увидят только члены группы; невалидная группа - 400.
+K16: X-Veles-On-Behalf-Of при владельческом bearer (VELES_API_TOKEN) -
+«загрузить от имени пользователя»: доверенный путь для Pipe-функции
+интеграции Open WebUI (integrations/openwebui/), админ-установленной;
+документ личный user:<email>, каталог L0 - uploads/<email>/. Без
+владельческого токена заголовок молча игнорируется (обычная семантика).
 app.py в этот файл не перекраивался: контекст (identity_fn/pipeline_fn)
 приходит через app.state.
 """
@@ -23,6 +28,7 @@ app.py в этот файл не перекраивался: контекст (i
 from __future__ import annotations
 
 import threading
+from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -46,8 +52,12 @@ from ..ingest.queue import (
     user_quota_lock,
 )
 from ..policy.groups import GROUP_ALL, defined_group_ids, group_exists
+from ..policy.identity import RequestIdentity, validated_user_id
 
 router = APIRouter(prefix="/v1/documents", tags=["documents"])
+
+# K16: заголовок «загрузить от имени пользователя» (доверенный путь Pipe-функции)
+ACT_AS_HEADER = "X-Veles-On-Behalf-Of"
 
 # одна очередь на процесс фасада; замок закрывает гонку первых двух запросов
 _QUEUE_LOCK = threading.Lock()
@@ -72,6 +82,34 @@ def _ctx(request: Request) -> dict:
 
 def _identity(request: Request, authorization: str):
     return _ctx(request)["identity_fn"](request, authorization)
+
+
+def _acting_identity(request: Request, on_behalf_of: str) -> Optional[RequestIdentity]:
+    """K16: личность «от имени пользователя» для доверенного клиента.
+
+    Заголовок ACT_AS_HEADER принимается ТОЛЬКО при точном совпадении bearer с
+    владельческим токеном (VELES_API_TOKEN): вызывать будет Pipe-функция,
+    админ-установленная в Open WebUI (доверенный путь). В противном случае
+    заголовок молча ИГНОРИРУЕТСЯ (None) и документ строится по обычной
+    семантике личности: identity-режимы - свой user:<uid>, static - владелец
+    или 401. Токен не настроен - доверенного пути нет вовсе.
+
+    Группы act-as: только личная user:<email> (+all) - смысл заголовка именно
+    «личный документ пользователя», производные группы владельца не наследуются.
+    """
+    if not on_behalf_of.strip():
+        return None
+    state = _ctx(request)
+    token = state["token"]
+    if not token or (request.headers.get("authorization") or "") != f"Bearer {token}":
+        return None
+    uid = validated_user_id(on_behalf_of)
+    if uid is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{ACT_AS_HEADER}: ожидается email пользователя",
+        )
+    return RequestIdentity(user_id=uid, admin=False, groups={GROUP_ALL, f"user:{uid}"})
 
 
 def _queue(request: Request) -> IngestQueue:
@@ -100,7 +138,7 @@ def _ensure_group_exists(group_param: str) -> None:
 
 
 def _document_groups(
-    ident, groups_param: str, group_param: str, identity_mode: str
+    ident, groups_param: str, group_param: str
 ) -> list[str]:
     """access_groups документа.
 
@@ -108,10 +146,10 @@ def _document_groups(
     валидность группы проверена ранее (_ensure_group_exists, до записи L0).
     access_groups от клиента (инвариант 5: группы не приходят от клиента) -
     по-прежнему только админу. Без всего - безопасный дефолт: личная
-    user:<uid> (identity-режимы) или группы владельца (static); производные
-    группы ident (all и определённые серверные - их резолвер добавляет для
-    ЧТЕНИЯ) документу по умолчанию не полагаются, иначе каждая личная загрузка
-    стала бы видна всем."""
+    user:<uid> (identity-режимы, а с K16 и act-as: у личности с user_id -
+    личная группа); производные группы ident (all и определённые серверные -
+    их резолвер добавляет для ЧТЕНИЯ) документу по умолчанию не полагаются,
+    иначе каждая личная загрузка стала бы видна всем."""
     if group_param.strip() and groups_param.strip():
         # ревью K7: молчаливый приоритет group= над access_groups= скрывал
         # половину намерения админа - требуем выбрать что-то одно
@@ -130,7 +168,12 @@ def _document_groups(
         parsed = sorted({g.strip() for g in groups_param.split(",") if g.strip()})
         if parsed:
             return parsed
-    if identity_mode != "static" and ident.user_id:
+    if ident.user_id:
+        # личная группа пользователя. Раньше условие было «identity_mode !=
+        # static и ident.user_id», но в static у личности user_id всегда пуст
+        # (один владелец), поэтому проверка mode была избыточной; с K16
+        # act-as создаёт личность с непустым user_id и в static-режиме -
+        # документ обязан остаться личным
         return [f"user:{ident.user_id}"]
     derived = defined_group_ids() | {"*"}  # GROUP_ALL входит в defined
     groups = sorted(ident.groups - derived)
@@ -139,13 +182,18 @@ def _document_groups(
 
 @router.post("")
 async def upload_document(
-    request: Request, authorization: str = Header(default="")
+    request: Request,
+    authorization: str = Header(default=""),
+    x_veles_on_behalf_of: str = Header(default="", alias=ACT_AS_HEADER),
 ):
     """Загрузка документа: multipart (file [+ title, group, access_groups]) или
     JSON ({text, title, group}). Форматы первого шага: txt/md/pdf. Квоты
     проверяются ДО постановки в очередь (документы - 403, размер L0 - 413).
     group=<id> (K7) - серверная группа доступа, невалидная - 400; access_groups -
     только админу (инвариант 5).
+    K16: ACT_AS_HEADER + владельческий bearer - документ ЛИЧНО указанного
+    пользователя (см. _acting_identity); заголовок без владельческого токена
+    молча игнорируется.
 
     P1 ревью K4: Content-Length проверяется ДО разбора тела против жёсткого
     капа VELES_UPLOAD_MAX_MB и против свободного остатка квоты (грубо, без
@@ -156,7 +204,9 @@ async def upload_document(
     Запись L0 - через run_in_threadpool, не блокируя событийный цикл.
     """
     ident = _identity(request, authorization)
-    state = _ctx(request)
+    acting = _acting_identity(request, x_veles_on_behalf_of)
+    if acting is not None:
+        ident = acting
     queue = _queue(request)
 
     content_type = (request.headers.get("content-type") or "").lower()
@@ -275,7 +325,7 @@ async def upload_document(
             title=title,
             document_id=document_id,
             size_bytes=len(raw),
-            groups=_document_groups(ident, groups_param, group_param, state["identity_mode"]),
+            groups=_document_groups(ident, groups_param, group_param),
         )
     except QueueCapacityExceeded as e:
         # джоба нет и не будет - L0 этой загрузки не оставляем (как _discard_l0
