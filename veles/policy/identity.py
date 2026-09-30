@@ -152,7 +152,7 @@ class StaticOwnerResolver:
         allowed_groups), не автоматически. Без wildcard "*": владелец может
         сознательно ограничить документ через access_groups= - и тогда сам его
         в поиске не видит (K4/K7, покрыто негативами)."""
-        return set(self._groups) | {GROUP_ALL} | defined_group_ids() | {"*"}
+        return set(self._groups) | {GROUP_ALL} | defined_group_ids()
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
         return RequestIdentity(user_id="", admin=True, groups=self.allowed_groups())
@@ -194,7 +194,7 @@ class JwtHeaderResolver:
         множество НЕ входит - он срезается по uid в _identity. Без wildcard
         "*": bearer-владелец не должен видеть документы, ограниченные
         админом через access_groups= (K4/K7)."""
-        return set(self._groups) | {GROUP_ALL} | defined_group_ids() | {"*"}
+        return set(self._groups) | {GROUP_ALL} | defined_group_ids()
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
         if self.mode == "jwt":
