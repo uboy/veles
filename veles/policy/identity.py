@@ -149,14 +149,9 @@ class StaticOwnerResolver:
         """Группы владельца (K7): настроенные + all (неявно) + все определённые
         серверные - владелец админ, состав групп ему виден целиком. Произвольные
         access_groups вне конфига - как раньше: только с правом (группа в
-        allowed_groups), не автоматически.
-
-        K16: добавлен wildcard "*" - static-владелец и так админ для путей
-        чтения (source/asset/stats: _visible_by_groups пропускает по
-        ident.admin), а поиск групповой фильтр снимает только по "*". Без
-        wildcard поиск владельца не видел бы личные (user:<email>) документы,
-        загруженные через X-Veles-On-Behalf-Of, - в static-режиме их создатель
-        по поиску один и есть владелец."""
+        allowed_groups), не автоматически. Без wildcard "*": владелец может
+        сознательно ограничить документ через access_groups= - и тогда сам его
+        в поиске не видит (K4/K7, покрыто негативами)."""
         return set(self._groups) | {GROUP_ALL} | defined_group_ids() | {"*"}
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
@@ -196,12 +191,9 @@ class JwtHeaderResolver:
     def allowed_groups(self) -> set[str]:
         """Базовые группы владельца/bearer-доступа (K7): настроенные + all +
         все определённые серверные. Пер-пользовательский membership в это
-        множество НЕ входит - он срезается по uid в _identity.
-
-        K16: wildcard "*" - bearer-владелец админ (RequestIdentity.admin=True),
-        а поиск снимает групповой фильтр только по "*"; без него поиск
-        владельца не видел бы личные user:<email> документы (act-as), которые
-        source/asset/stats владельцу и так видны по ident.admin."""
+        множество НЕ входит - он срезается по uid в _identity. Без wildcard
+        "*": bearer-владелец не должен видеть документы, ограниченные
+        админом через access_groups= (K4/K7)."""
         return set(self._groups) | {GROUP_ALL} | defined_group_ids() | {"*"}
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:

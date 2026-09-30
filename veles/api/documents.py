@@ -138,7 +138,7 @@ def _ensure_group_exists(group_param: str) -> None:
 
 
 def _document_groups(
-    ident, groups_param: str, group_param: str
+    ident, groups_param: str, group_param: str, identity_mode: str
 ) -> list[str]:
     """access_groups документа.
 
@@ -173,8 +173,18 @@ def _document_groups(
         # static и ident.user_id», но в static у личности user_id всегда пуст
         # (один владелец), поэтому проверка mode была избыточной; с K16
         # act-as создаёт личность с непустым user_id и в static-режиме -
-        # документ обязан остаться личным
-        return [f"user:{ident.user_id}"]
+        # документ обязан остаться личным.
+        groups = [f"user:{ident.user_id}"]
+        if identity_mode == "static":
+            # K16, static: владелец - единственный читатель фасада, а wildcard
+            # "*" ему давать нельзя (ломает контракт «access_groups= умеет
+            # ограничить документ и от самого владельца», K4/K7). Личная группа
+            # act-as дополняется дефолтной "personal" - документ находят тем же
+            # путём, что и обычные загрузки владельца; в identity-режимах
+            # документ остаётся чисто личным (user:<email>), ACL по-настоящему
+            # порезан по пользователям.
+            groups.append("personal")
+        return groups
     derived = defined_group_ids() | {"*"}  # GROUP_ALL входит в defined
     groups = sorted(ident.groups - derived)
     return groups or sorted({"personal"})
@@ -207,6 +217,7 @@ async def upload_document(
     acting = _acting_identity(request, x_veles_on_behalf_of)
     if acting is not None:
         ident = acting
+    state = _ctx(request)
     queue = _queue(request)
 
     content_type = (request.headers.get("content-type") or "").lower()
@@ -325,7 +336,7 @@ async def upload_document(
             title=title,
             document_id=document_id,
             size_bytes=len(raw),
-            groups=_document_groups(ident, groups_param, group_param),
+            groups=_document_groups(ident, groups_param, group_param, state["identity_mode"]),
         )
     except QueueCapacityExceeded as e:
         # джоба нет и не будет - L0 этой загрузки не оставляем (как _discard_l0
