@@ -55,6 +55,21 @@ def normalize_user_id(raw: str) -> str:
     return (raw or "").strip().lower()
 
 
+def validated_user_id(raw: str) -> Optional[str]:
+    """Нормализует и проверяет uid (email) из доверенного источника
+    (K16: заголовок X-Veles-On-Behalf-Of при владельческом токене).
+    None - пустой или небезопасный (обход каталогов, разделители пути):
+    такой uid не должен попадать ни в document_id, ни в каталог L0.
+    Ревью K16 P2: плюс форма email и лимит длины - «!!!» давал каталог
+    uploads/!!!/, гигантский email - OSError при записи L0 (500)."""
+    uid = normalize_user_id(raw)
+    if not uid or _UNSAFE_USER_ID.search(uid):
+        return None
+    if len(uid) > 254 or not re.fullmatch(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", uid):
+        return None
+    return uid
+
+
 def admin_emails() -> set[str]:
     """VELES_ADMIN_EMAILS - список админов через запятую (сравнение нормализованное)."""
     raw = os.environ.get("VELES_ADMIN_EMAILS", "")
@@ -138,7 +153,9 @@ class StaticOwnerResolver:
         """Группы владельца (K7): настроенные + all (неявно) + все определённые
         серверные - владелец админ, состав групп ему виден целиком. Произвольные
         access_groups вне конфига - как раньше: только с правом (группа в
-        allowed_groups), не автоматически."""
+        allowed_groups), не автоматически. Без wildcard "*": владелец может
+        сознательно ограничить документ через access_groups= - и тогда сам его
+        в поиске не видит (K4/K7, покрыто негативами)."""
         return set(self._groups) | {GROUP_ALL} | defined_group_ids()
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
@@ -178,7 +195,9 @@ class JwtHeaderResolver:
     def allowed_groups(self) -> set[str]:
         """Базовые группы владельца/bearer-доступа (K7): настроенные + all +
         все определённые серверные. Пер-пользовательский membership в это
-        множество НЕ входит - он срезается по uid в _identity."""
+        множество НЕ входит - он срезается по uid в _identity. Без wildcard
+        "*": bearer-владелец не должен видеть документы, ограниченные
+        админом через access_groups= (K4/K7)."""
         return set(self._groups) | {GROUP_ALL} | defined_group_ids()
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
