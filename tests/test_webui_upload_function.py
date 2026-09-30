@@ -41,6 +41,12 @@ class FakeResponse:
             return self._payload
         return json.dumps(self._payload).encode("utf-8")
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc) -> bool:
+        return False
+
 
 class HttpMock:
     """Замок urlopen: собирает вызовы, отвечает по очереди/по методу."""
