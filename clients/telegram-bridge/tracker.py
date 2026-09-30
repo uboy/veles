@@ -44,6 +44,13 @@ def _atomic_write(path: Path, text: str) -> None:
     с O_EXCL и правами 0600: предсказуемое имя + symlink-гонка закрыты
     (O_EXCL поддержан и на Windows), данные выгоняются fsync до os.replace
     (карточка переживает сбой питания); при ошибке tmp удаляется.
+
+    os.replace на Windows падает PermissionError, если целевой файл в этот
+    момент ОТКРЫТ читателем (читать-пока-пишут законно, а вот replace поверх
+    открытого - нет; на Linux replace всегда проходит). Ретраим с короткой
+    паузой: чтение читателя длится миллисекунды, инвариант не нарушается
+    (до успешного replace читатель видит целиком старый файл). На POSIX
+    PermissionError не возникает - ретраи мертвы.
     """
     path = Path(path)
     tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}-{threading.get_ident()}")
@@ -53,7 +60,14 @@ def _atomic_write(path: Path, text: str) -> None:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp, path)
+        for attempt in range(10):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:
+                if attempt == 9:
+                    raise
+                time.sleep(0.002 * (attempt + 1))
     finally:
         if tmp.exists():
             tmp.unlink()
