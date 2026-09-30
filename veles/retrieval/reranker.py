@@ -57,21 +57,43 @@ def _load(model_name: str) -> Scorer:
 
     started = time.perf_counter()
     try:
-        # device="cpu" - инференс CPU-only (см. докстринг модуля); max_length=512 -
-        # длинные фрагменты обрезаются токенизатором, не падают (узел индекса
-        # в 512 токенов токенизатора bge помещается почти всегда).
-        model = CrossEncoder(model_name, device="cpu", max_length=512)
+        # Дефолт cpu: инференс CPU-only (см. докстринг модуля). VELES_RERANKER_DEVICE
+        # и VELES_RERANKER_MAX_LENGTH - для бенчей/хостов с GPU: устройство и
+        # обрезка длинных фрагментов (дефолт 512 - узел индекса помещается почти
+        # всегда); батч тоже env (длина 4096+ при дефолтном 32 рвёт память).
+        from ..config import (
+            VELES_RERANKER_BATCH,
+            VELES_RERANKER_DEVICE,
+            VELES_RERANKER_MAX_LENGTH,
+        )
+
+        model = CrossEncoder(
+            model_name,
+            device=VELES_RERANKER_DEVICE,
+            max_length=VELES_RERANKER_MAX_LENGTH or 512,
+        )
     except Exception:
         _load_failed.add(model_name)
         raise
     _model = model
     _model_name = model_name
     log.info(
-        "reranker: модель %s загружена за %.1f с (device=cpu)",
+        "reranker: модель %s загружена за %.1f с (device=%s, max_length=%d)",
         model_name,
         time.perf_counter() - started,
+        VELES_RERANKER_DEVICE,
+        VELES_RERANKER_MAX_LENGTH or 512,
     )
     return model
+
+
+def _predict(scorer: Scorer, pairs: Sequence[Sequence[str]]):
+    """predict с env-батчем (для длинных входов на GPU); дефолт - штатный predict."""
+    from ..config import VELES_RERANKER_BATCH
+
+    if VELES_RERANKER_BATCH and VELES_RERANKER_BATCH != 32:
+        return scorer.predict(pairs, batch_size=max(1, VELES_RERANKER_BATCH))
+    return scorer.predict(pairs)
 
 
 def preload() -> None:
@@ -142,7 +164,15 @@ def rerank(
                 return list(candidates)[:limit]
             scorer = _load(name)
             scorer_label = name
-        scores = scorer.predict([[query, c.text] for c in candidates])
+        from ..config import VELES_RERANKER_BATCH
+
+        if VELES_RERANKER_BATCH:  # env для длинных входов на GPU; дефолт 0 - штатный predict
+            scores = scorer.predict(
+                [[query, c.text] for c in candidates],
+                batch_size=max(1, int(VELES_RERANKER_BATCH)),
+            )
+        else:
+            scores = scorer.predict([[query, c.text] for c in candidates])
         if len(scores) != len(candidates):
             raise ValueError(
                 f"скорер вернул {len(scores)} скоров на {len(candidates)} пар"

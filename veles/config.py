@@ -73,8 +73,11 @@ CONFLICT_SCORE_DELTA = 0.05
 # поведение без изменений; имя модели = HuggingFace id (например
 # BAAI/bge-reranker-v2-m3). Модель грузится лениво при первом вызове и кэшируется;
 # ошибка загрузки/инференса = деградация к обычному порядку выдачи (fail-open,
-# лог-warning). Инференс CPU-only (device="cpu" в коде): GPU стенд заняты 1С,
-# решение о GPU-инференсе - отдельный замер владельца.
+# лог-warning). Инференс по умолчанию CPU; VELES_RERANKER_DEVICE/MAX_LENGTH/BATCH -
+# для GPU-бенчей (батч и обрезка длинных входов; 0 = штатные дефолты модели).
 VELES_RERANKER_MODEL = os.environ.get("VELES_RERANKER_MODEL", "")
+VELES_RERANKER_DEVICE = os.environ.get("VELES_RERANKER_DEVICE", "cpu")
+VELES_RERANKER_MAX_LENGTH = int(os.environ.get("VELES_RERANKER_MAX_LENGTH", "0"))
+VELES_RERANKER_BATCH = int(os.environ.get("VELES_RERANKER_BATCH", "0"))
 # Глубина пула кандидатов под rerank (узлов после RRF/буста; бриф K17 - 25).
 RERANK_CANDIDATES = 25
