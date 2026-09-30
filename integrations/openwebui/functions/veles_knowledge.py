@@ -190,8 +190,14 @@ def _veles_filename(name: str) -> str:
 
 
 def _source_link(public_url: str, token: str, citation: dict) -> str:
-    """Ссылка на источник для цитаты - тот же формат, что render_chat_content
-    фасада (static): /v1/source/<document_id>?token=..&node=..#n-<node>."""
+    """Ссылка на источник для цитаты: сначала готовая citation["source_url"] из
+    фасада (K20: при VELES_LINK_SECRET фасад отдаёт подписанную exp+sig -
+    владельческий токен в URL не попадает); старые фасады без поля - самодельная
+    с token= (fallback, формат render_chat_content static)."""
+    ready = str(citation.get("source_url") or "").strip()
+    if ready.startswith(("http://", "https://")):
+        return ready
+    # пусто или мусор в поле - строим сами, как для старого фасада
     doc = quote(str(citation.get("document_id") or ""), safe="/")
     node = quote(str(citation.get("node_version_id") or ""))
     q = f"token={quote(token)}&node={node}" if token else f"node={node}"
@@ -199,8 +205,11 @@ def _source_link(public_url: str, token: str, citation: dict) -> str:
 
 
 def _asset_link(public_url: str, token: str, citation: dict) -> str:
-    """Ссылка на изображение-цитату (PDF) - формат asset_url фасада:
-    /v1/asset/<document_id>/<name>?token=.."""
+    """Ссылка на изображение-цитату (PDF): готовая citation["asset_url"] (K20,
+    подписанная при VELES_LINK_SECRET); старые фасады - самодельная с token=."""
+    ready = str(citation.get("asset_url") or "").strip()
+    if ready.startswith(("http://", "https://")):
+        return ready
     doc = quote(str(citation.get("document_id") or ""), safe="/")
     name = quote(str(citation.get("asset") or ""))
     q = f"token={quote(token)}" if token else ""

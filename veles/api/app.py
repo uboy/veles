@@ -219,6 +219,29 @@ class VelesPipeline:
         }
 
 
+def attach_citation_links(result: dict, token: str, link_secret: str = "") -> dict:
+    """K20: готовые ссылки источника/актива в ДАННЫЕ цитат (consumers - Pipe-функции
+    WebUI и любые клиенты /v1/knowledge/query). Правила те же, что у текстового
+    рендера: подписанные exp+sig при заданном секрете (владельческий токен в URL
+    не попадает), иначе token= - обратная совместимость. Текстовые рендеры не
+    трогает: они строят ссылки сами, поля цитат игнорируют."""
+    signed = bool(link_secret)
+    exp = int(time.time()) + LINK_TTL_S if signed else 0
+    for c in result.get("citations", []):
+        doc, node = c.get("document_id"), c.get("node_version_id")
+        if doc and node:
+            c["source_url"] = (
+                signed_source_url(link_secret, doc, node, exp)
+                if signed else source_url(doc, node, token)
+            )
+        if c.get("asset") and doc:
+            c["asset_url"] = (
+                signed_asset_url(link_secret, doc, c["asset"], exp)
+                if signed else asset_url(doc, c["asset"], token)
+            )
+    return result
+
+
 def render_chat_content(result: dict, token: str = "", link_secret: str = "") -> str:
     """Ссылки в ответе: token= (static) или подписанные exp+sig (identity-режимы,
     ссылка живёт LINK_TTL_S - браузер не передаёт заголовки личности)."""
@@ -706,10 +729,16 @@ def create_app(
         ident = _identity(request, authorization)
         p = _pipeline()
         revision = _resolve_revision(p.bundle, req.revision)
-        return p.answer(
+        result = p.answer(
             req.query, req.top_k, req.use_llm,
             allowed_groups=ident.groups, revision=revision,
         )
+        # K20: тот же режим ссылок, что у текстового рендера chat (static ->
+        # token=, identity-режимы -> подписанные exp+sig)
+        link_secret = (
+            state["link_secret"] if state["identity_mode"] != "static" else ""
+        )
+        return attach_citation_links(result, state["token"], link_secret)
 
     @app.post("/v1/chat/completions")
     def chat_completions(
@@ -733,6 +762,9 @@ def create_app(
         link_secret = (
             state["link_secret"] if state["identity_mode"] != "static" else ""
         )
+        # K20: те же ссылки и в данные цитат (veles.citations), текстовый рендер
+        # свои ссылки строит сам - его вывод не меняется
+        attach_citation_links(result, state["token"], link_secret)
         if result["decision"] in ("answer", "warn_conflict"):
             content = render_chat_content(
                 result, token=state["token"], link_secret=link_secret

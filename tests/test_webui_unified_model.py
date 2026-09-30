@@ -400,6 +400,47 @@ def test_render_appends_asset_images(mod) -> None:
     assert "![изображение](http://veles:8400/v1/asset/docs/%D0%BB%D0%B5%D0%BA%D1%86%D0%B8%D1%8F.pdf/page-3.png?token=owner-token)" in out
 
 
+def test_ready_links_from_facade_win(pipe) -> None:
+    """K20 позитив: фасад прислал готовую source_url (подписанную exp+sig, без
+    токена, как при VELES_LINK_SECRET) - функция берёт её как есть, самодельную
+    ссылку с владельческим токеном не строит."""
+    ready = (
+        "http://<bench-lan-ip>:8401/v1/source/ivanov%40corp.ru/"
+        "%D1%80%D0%B5%D0%B3%D0%BB%D0%B0%D0%BC%D0%B5%D0%BD%D1%82"
+        "?node=nv-1&exp=1790000000&sig=" + "a" * 64 + "#n-nv-1"
+    )
+    result = {
+        **QUERY_RESULT,
+        "citations": [{**QUERY_RESULT["citations"][0], "source_url": ready}],
+    }
+    http = HttpMock([("POST", "/v1/knowledge/query", 200, result)])
+    out = pipe(http).pipe(BODY_QUESTION, USER)
+    assert "Источники:" in out
+    assert ready in out  # готовая ссылка - и в сноске, и в тексте синтеза
+    assert "token=owner-token" not in out  # самодельная с токеном не строится
+
+
+def test_ready_asset_link_used(mod) -> None:
+    """K20: готовые ссылки из цитат (source_url и asset_url) идут в рендер как
+    есть; негатив (старый фасад без полей - самодельные с token=) покрыт
+    test_render_appends_asset_images и test_question_only_answer_with_citations."""
+    ready_src = "http://pub:8401/v1/source/docs/x.pdf?node=nv1&exp=1&sig=" + "a" * 64
+    ready_asset = "http://pub:8401/v1/asset/docs/x.pdf/page-3.png?exp=1&sig=" + "b" * 64
+    result = {
+        "decision": "answer",
+        "answer": "Ответ [1].",
+        "citations": [{
+            "n": 1, "title": "Л", "document_id": "docs/x.pdf", "source_id": "x.pdf",
+            "node_version_id": "nv1", "asset": "page-3.png", "lines": [1, 2],
+            "source_url": ready_src, "asset_url": ready_asset,
+        }],
+    }
+    out = mod._render_answer(result, "http://veles:8400", "owner-token")
+    assert ready_src in out
+    assert f"![изображение]({ready_asset})" in out
+    assert "token=owner-token" not in out
+
+
 def test_images_skipped_question_still_answered(pipe) -> None:
     """Картинка - не документ: загрузки нет, текстовый вопрос работает."""
     http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])

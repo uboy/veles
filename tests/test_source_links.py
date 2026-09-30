@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
 from tests.test_api import make_pipeline
 from veles.api import app as app_module
 from veles.api.app import (
+    asset_url,
     create_app,
     link_sig,
     render_chat_content,
@@ -194,3 +196,123 @@ def test_source_head_supported(tmp_path, monkeypatch):
     # несуществующий документ под HEAD - тот же 404, что под GET
     assert client.head("/v1/source/lectures/none.txt",
                        params={"token": "t"}).status_code == 404
+
+
+# --- K20: готовые ссылки в данных цитат (query и veles.citations) ---
+
+
+def test_query_citations_carry_token_links(monkeypatch):
+    """Негатив (обратная совместимость): static без VELES_LINK_SECRET - цитаты
+    /v1/knowledge/query несут token-URL, ровно те же, что строил текстовый
+    рендер; у актива - asset_url; у узла без актива поля asset_url нет."""
+    monkeypatch.delenv("VELES_LINK_SECRET", raising=False)
+    p = make_pipeline()
+    p.bundle.node_meta["n1"]["asset"] = "page-3.png"
+    client = TestClient(create_app(pipeline=p, api_token="t"))
+    r = client.post(
+        "/v1/knowledge/query",
+        json={"query": "какая норма управляемости", "top_k": 3},
+        headers={"Authorization": "Bearer t"},
+    )
+    d = r.json()
+    assert d["decision"] == "answer"
+    by_n = {c["n"]: c for c in d["citations"]}
+    c1 = by_n[1]
+    assert c1["source_url"] == source_url(c1["document_id"], c1["node_version_id"], "t")
+    assert "token=t" in c1["source_url"] and "sig=" not in c1["source_url"]
+    assert c1["asset_url"] == asset_url(c1["document_id"], "page-3.png", "t")
+    c2 = by_n[2]
+    assert "asset_url" not in c2
+    assert c2["source_url"] == source_url(c2["document_id"], c2["node_version_id"], "t")
+
+
+def test_query_citations_carry_signed_links(tmp_path, monkeypatch):
+    """Позитив (K20): identity-режим с VELES_LINK_SECRET - цитаты query несут
+    подписанные URL без владельческого токена; sig совпадает с link_sig и
+    принимается фасадом: анонимный GET по ссылке из цитаты - 200, подделанная
+    подпись - 401 (полный цикл «цитата -> ссылка -> документ»)."""
+    _make_canon(tmp_path)
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    monkeypatch.setenv("VELES_IDENTITY_MODE", "headers")
+    monkeypatch.setenv("VELES_LINK_SECRET", "k20-secret")
+    p = make_pipeline()
+    p.bundle.node_meta["n1"].update(
+        {"document_id": "lectures/x.txt", "asset": "page-3.png"}
+    )
+    client = TestClient(create_app(pipeline=p, api_token="tok"))
+    r = client.post(
+        "/v1/knowledge/query",
+        json={"query": "какая норма управляемости"},
+        headers={"Authorization": "Bearer tok"},
+    )
+    d = r.json()
+    assert d["decision"] == "answer"
+    c1 = next(c for c in d["citations"] if c["document_id"] == "lectures/x.txt")
+    url = c1["source_url"]
+    assert "token=" not in url
+    parts = urlparse(url)
+    q = parse_qs(parts.query)
+    exp = int(q["exp"][0])
+    assert q["sig"][0] == link_sig(
+        "k20-secret", c1["document_id"], c1["node_version_id"], exp
+    )
+    assert parts.fragment == f"n-{c1['node_version_id']}"
+    # подписанная ссылка из цитаты открывается анонимно (без bearer и заголовков)
+    assert client.get(f"{parts.path}?{parts.query}").status_code == 200
+    # подделанная подпись - отказ
+    bad = f"{parts.path}?{parts.query}".replace(q["sig"][0], "0" * len(q["sig"][0]))
+    assert client.get(bad).status_code == 401
+    # формат подписи заморожен: exp обязан входить в HMAC - сдвиг exp при
+    # старой подписи тоже отказ (упадёт при регрессии формата link_sig)
+    tampered = f"{parts.path}?exp={exp + 1}&sig={q['sig'][0]}"
+    assert client.get(tampered).status_code == 401
+    # актив - подписанный asset_url без токена
+    a = urlparse(c1["asset_url"])
+    aq = parse_qs(a.query)
+    assert "token=" not in c1["asset_url"]
+    assert aq["sig"][0] == link_sig(
+        "k20-secret", c1["document_id"], "page-3.png", int(aq["exp"][0])
+    )
+
+
+def test_chat_citations_carry_links_render_untouched(monkeypatch):
+    """K20: veles.citations в chat/completions несут те же готовые ссылки
+    (static - token=), а текстовый рендер не меняется - свои ссылки, как раньше."""
+    monkeypatch.delenv("VELES_LINK_SECRET", raising=False)
+    client = TestClient(create_app(pipeline=make_pipeline(), api_token="t"))
+    r = client.post(
+        "/v1/chat/completions",
+        json={"model": "veles-knowledge",
+              "messages": [{"role": "user", "content": "какая норма управляемости"}]},
+        headers={"Authorization": "Bearer t"},
+    )
+    d = r.json()
+    c1 = d["veles"]["citations"][0]
+    assert "token=t" in c1["source_url"] and "sig=" not in c1["source_url"]
+    content = d["choices"][0]["message"]["content"]
+    assert "Источники:" in content
+    assert "token=t" in content  # рендер строит ссылки сам, как и до K20
+    assert "source_url" not in content  # поля данных в текст не пролезают
+
+
+def test_chat_citations_signed_in_identity_mode(tmp_path, monkeypatch):
+    """K20: в identity-режиме с секретом veles.citations chat несут подписанные
+    URL без токена; текстовый рендер подписан тоже (существующее поведение)."""
+    _make_canon(tmp_path)
+    monkeypatch.setenv("VELES_DATA", str(tmp_path / "data"))
+    monkeypatch.setenv("VELES_IDENTITY_MODE", "headers")
+    monkeypatch.setenv("VELES_LINK_SECRET", "k20-secret")
+    p = make_pipeline()
+    p.bundle.node_meta["n1"].update({"document_id": "lectures/x.txt"})
+    client = TestClient(create_app(pipeline=p, api_token="tok"))
+    r = client.post(
+        "/v1/chat/completions",
+        json={"model": "veles-knowledge",
+              "messages": [{"role": "user", "content": "какая норма управляемости"}]},
+        headers={"Authorization": "Bearer tok"},
+    )
+    d = r.json()
+    c1 = d["veles"]["citations"][0]
+    assert "token=" not in c1["source_url"] and "sig=" in c1["source_url"]
+    assert "token=" not in d["choices"][0]["message"]["content"]
+    assert "sig=" in d["choices"][0]["message"]["content"]
