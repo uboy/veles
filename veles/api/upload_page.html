@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>База знаний - загрузка документов</title>
+<link rel="stylesheet" href="/static/upload.css">
+</head>
+<body>
+<h1>Загрузка документов в базу знаний</h1>
+<p>Файл (.txt, .md, .pdf до 50 МБ) уходит в очередь обработки; после
+обработки документ сразу доступен в поиске. Повторная загрузка того же
+документа создаёт новую редакцию (старая сохраняется).</p>
+<form id="upform">
+  <input type="file" id="file" accept=".txt,.md,.pdf">
+  <button type="submit">Загрузить</button>
+</form>
+<p id="msg"></p>
+<h2>Документы в базе</h2>
+<p><button id="refresh" type="button">Обновить список</button></p>
+<div id="docs"><p><i>загрузка...</i></p></div>
+<p><small>Панель управления владельца; поиск и вопросы - в веб-чате
+(модель «veles-knowledge»).</small></p>
+<script src="/static/upload.js"></script>
+</body>
+</html>

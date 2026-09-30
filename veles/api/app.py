@@ -25,7 +25,7 @@ from urllib.parse import quote
 
 import pydantic
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from ..config import INDEX_DIR, VELES_PUBLIC_URL, VELES_SOURCE_ROOTS
 from ..indexing.embedder import SentenceTransformersProvider
@@ -88,18 +88,20 @@ def signed_source_url(secret: str, document_id: str, node_version_id: str, exp: 
             f"#n-{quote(node_version_id)}")
 
 
-def html_security_headers() -> dict[str, str]:
+def html_security_headers(allow_self_scripts: bool = False) -> dict[str, str]:
     """Единый набор security-заголовков HTML-страниц фасада (/v1/source,
-    /tracker; K8). CSP строгий: на страницах нет инлайн-скриптов/стилей -
-    скролл к узлу делает браузер по #fragment, переходы по ссылкам CSP не
-    ограничивает. JSON-ответы и ошибки не трогаются."""
+    /tracker, /upload; K8). CSP строгий: инлайн-скриптов/стилей нет нигде;
+    страницы с внешними файлами (панель загрузки) получают script-src 'self' -
+    свои же статические файлы, сторонних источников нет. JSON-ответы и
+    ошибки не трогаются."""
+    script = "script-src 'self'; " if allow_self_scripts else ""
     return {
         "X-Content-Type-Options": "nosniff",
         "X-Frame-Options": "DENY",
         "Referrer-Policy": "no-referrer",
         "Content-Security-Policy": (
-            "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; "
-            "form-action 'none'"
+            "default-src 'none'; " + script +
+            "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         ),
     }
 
@@ -841,6 +843,53 @@ def create_app(
         # /v1/source (K8); CSP строгий без unsafe-inline: на странице нет
         # инлайн-стилей/скриптов, а переходы по ссылкам CSP не ограничивает.
         return HTMLResponse(NEWLINE.join(html), headers=html_security_headers())
+
+    @app.api_route("/upload", methods=["GET", "HEAD"])
+    def upload_page(
+        request: Request, token: str = "",
+        authorization: str = Header(default=""),
+    ):
+        """Веб-панель загрузки документов (запрос владельца 30.09: «где панель
+        для загрузки?»): файл -> очередь ингеста -> поиск, статусы джобов и
+        список документов на одной странице.
+
+        Личность: bearer/token= (владелец; страница обычно открывается с
+        ?token=<VELES_API_TOKEN>) или заголовки (identity-режимы). Скрипт и
+        стили страницы - /static/upload.js|css с того же origin (CSP
+        script-src 'self', без unsafe-inline)."""
+        ident = _link_identity(request, authorization, token, "upload", "", "", "")
+        if ident is None:
+            ident = _header_identity(request) or _owner_identity()
+        if ident is None:
+            raise HTTPException(status_code=401, detail="unauthorized")
+        page = (Path(__file__).parent / "upload_page.html").read_text(encoding="utf-8")
+        headers = html_security_headers(allow_self_scripts=True)
+        return HTMLResponse(page, headers=headers)
+
+    def _static_page_asset(request: Request, token: str, authorization: str,
+                           name: str, media: str) -> Response:
+        ident = _link_identity(request, authorization, token, "upload", "", "", "")
+        if ident is None:
+            ident = _header_identity(request) or _owner_identity()
+        if ident is None:
+            raise HTTPException(status_code=401, detail="unauthorized")
+        if not re.fullmatch(r"[\w.-]+", name):
+            raise HTTPException(status_code=400, detail="bad name")
+        path = Path(__file__).parent / "static" / name
+        return Response(path.read_text(encoding="utf-8"), media_type=media,
+                        headers=html_security_headers(allow_self_scripts=True))
+
+    @app.get("/static/upload.js")
+    def static_upload_js(request: Request, token: str = "",
+                         authorization: str = Header(default="")):
+        return _static_page_asset(request, token, authorization,
+                                  "upload.js", "application/javascript")
+
+    @app.get("/static/upload.css")
+    def static_upload_css(request: Request, token: str = "",
+                          authorization: str = Header(default="")):
+        return _static_page_asset(request, token, authorization,
+                                  "upload.css", "text/css")
 
     @app.get("/tracker/file/{kind}/{name}")
     def tracker_file(
