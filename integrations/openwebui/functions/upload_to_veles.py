@@ -36,6 +36,7 @@ stdlib: urllib), pydantic есть в окружении Open WebUI.
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -86,6 +87,8 @@ def _http_bytes(
 def _multipart_body(fields: dict, file_field: str, filename: str, content: bytes):
     """multipart/form-data без внешних библиотек: (тело, content-type)."""
     boundary = "----velesboundary" + uuid.uuid4().hex
+    # кавычки/переводы строк ломают quoted-string заголовка - зачищаем
+    filename = re.sub(r'[\r\n"]', "", filename or "")
     parts: list[bytes] = []
     for name, value in fields.items():
         parts.append(
