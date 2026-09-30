@@ -317,9 +317,9 @@ def test_public_url_for_links(pipe) -> None:
 
     http2 = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
     p2 = pipe(http2)
-    p2.valves.veles_public_url = "http://<bench-lan-ip>:8400"
+    p2.valves.veles_public_url = "http://203.0.113.7:8400"
     out2 = p2.pipe(BODY_QUESTION, USER)
-    assert "http://<bench-lan-ip>:8400/v1/source/" in out2
+    assert "http://203.0.113.7:8400/v1/source/" in out2
     assert "http://veles:8400/v1/source/" not in out2
 
 
