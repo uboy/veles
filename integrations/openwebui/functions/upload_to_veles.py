@@ -13,13 +13,17 @@ Pipe-функция Open WebUI (K16): пользователь приклады�
   1. Admin Panel -> Functions -> «+» (New Function) -> вставить весь этот код
      (или Functions -> Import Functions -> из файла). Имя модели при создании:
      «Загрузить в базу знаний». Сохранить и включить тумблер.
-  2. На карточке функции - шестерёнка (Valves), задать:
+  2. Сделать модель видимой обычным пользователям: в 0.11.4 функция без
+     записи в Models видна ТОЛЬКО админам. Admin Panel -> Workspace -> Models
+     -> «Загрузить в базу знаний» -> видимость Public (или API
+     POST /api/v1/models/create с access_grants principal_id "*").
+  3. На карточке функции - шестерёнка (Valves), задать:
        veles_url   - базовый URL фасада Veles, видимый ИЗ КОНТЕЙНЕРА WebUI
                      (например http://host.docker.internal:8400);
        veles_token - владельческий токен фасада (VELES_API_TOKEN из
                      veles-facade.env). Токен не попадает в чат: он живёт
                      в Valves и виден только админам.
-  3. В чате выбрать модель «Загрузить в базу знаний», прикрепить файл
+  4. В чате выбрать модель «Загрузить в базу знаний», прикрепить файл
      (txt/md/pdf - поддержанные фасадом форматы первого шага) и написать
      название или комментарий. Каждый файл становится отдельным документом.
 
@@ -285,7 +289,13 @@ class Pipe:
 
     # ------------------------------------------------------------------- pipe
 
-    def pipe(self, body: dict, __user__: dict, __files__=None, __event_emitter__=None) -> str:
+    def pipe(self, body: dict, __user__: dict, __files__=None, __event_emitter__=None, __task__=None) -> str:
+        # Фоновые задачи WebUI (генерация поисковых запросов для приложенных
+        # файлов, теги, follow-up) вызывают ТУ ЖЕ модель: без этого guard'а
+        # загрузка происходила дважды, а документ получал названием служебный
+        # промпт задачи (живой тест стенд 2026-09-30). Задача - не загрузка.
+        if __task__:
+            return ""
         base_url = (self.valves.veles_url or "").strip().rstrip("/")
         token = (self.valves.veles_token or "").strip()
         if not base_url or not token:

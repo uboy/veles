@@ -224,6 +224,16 @@ def test_images_skipped_no_false_success(pipe) -> None:
     assert "Прикрепите" in out  # файлов текстового типа нет - честная инструкция
 
 
+def test_task_invocation_no_upload(pipe) -> None:
+    """Фоновые задачи WebUI (query-gen/теги) вызывают ту же модель с теми же
+    файлами: такие вызовы не должны ничего загружать (иначе документ получает
+    названием служебный промпт задачи - живой тест стенд 2026-09-30)."""
+    http = HttpMock([])
+    out = pipe(http).pipe(BODY_ONE, USER, __files__=FILE_ONE, __task__="search_query")
+    assert out == ""
+    assert http.calls == []
+
+
 def test_extract_frontmatter_compat(mod) -> None:
     """Docstring функции обязан парситься фронтматтер-парсером WebUI
     (content начинается с строки '\"\"\"' и несёт title/author/version)."""
