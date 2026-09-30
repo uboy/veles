@@ -405,7 +405,7 @@ def test_ready_links_from_facade_win(pipe) -> None:
     токена, как при VELES_LINK_SECRET) - функция берёт её как есть, самодельную
     ссылку с владельческим токеном не строит."""
     ready = (
-        "http://<bench-lan-ip>:8401/v1/source/ivanov%40corp.ru/"
+        "http://203.0.113.7:8401/v1/source/ivanov%40corp.ru/"
         "%D1%80%D0%B5%D0%B3%D0%BB%D0%B0%D0%BC%D0%B5%D0%BD%D1%82"
         "?node=nv-1&exp=1790000000&sig=" + "a" * 64 + "#n-nv-1"
     )
