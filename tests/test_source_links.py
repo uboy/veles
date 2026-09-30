@@ -92,6 +92,10 @@ def test_citations_and_footnotes_are_links():
     assert "](http://127.0.0.1:8400/v1/source/lectures/x.txt?token=tk&node=nv1#n-nv1)" in out
     assert "](http://127.0.0.1:8400/v1/source/lectures/k.txt?token=tk&node=nv2#n-nv2)" in out
     assert out.count("](http://") == 4  # 2 сноски + 2 строки источников
+    # ревью владельца 29.09 (демо сервер): текст сноски - название документа,
+    # а не голый номер (иначе непонятно, куда ведёт ссылка)
+    assert "[«Пересказ»](http://127.0.0.1:8400" in out
+    assert "[«Коучинг»](http://127.0.0.1:8400" in out
 
 
 def test_signed_citation_link_keeps_sig_and_adds_fragment():

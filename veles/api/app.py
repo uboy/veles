@@ -242,6 +242,12 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
         for c in result.get("citations", [])
         if c.get("document_id") and c.get("node_version_id")
     }
+    # ревью владельца 29.09 (демо сервер): текст ссылки = человекочитаемое
+    # название документа, а не голый [n] - иначе непонятно, куда ведёт ссылка
+    titles = {
+        c["n"]: (c.get("title") or c.get("document_id") or f"источник {c['n']}")[:80]
+        for c in result.get("citations", [])
+    }
     images = [
         _asset_link(c["document_id"], c["asset"])
         for c in result.get("citations", [])
@@ -251,10 +257,13 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
 
     answer = result["answer"]
     if links:
-        # сноски [n] в тексте синтеза -> кликабельные markdown-ссылки
+        # сноски [n] в тексте синтеза -> кликабельные ссылки с названием документа
         answer = _re.sub(
             r"\[(\d{1,2})\]",
-            lambda m: f"[{m.group(1)}]({links[int(m.group(1))]})" if int(m.group(1)) in links else m.group(0),
+            lambda m: (
+                f"[«{titles[int(m.group(1))]}»]({links[int(m.group(1))]})"
+                if int(m.group(1)) in links else m.group(0)
+            ),
             answer,
         )
     blocks = [answer, "", "Источники:"]
