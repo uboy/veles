@@ -233,8 +233,30 @@ else
     env_set "$ENV_FILE" VELES_WITH_VOXFUSION "$WITH_VOXFUSION"
     [ "$PROFILE" = "corporate" ] || env_set "$ENV_FILE" VELES_CORPUS_ROOT "$IN_DIR/corpus"
 
-    ask_var VELES_PUBLIC_URL "Публичный URL фасада (как его видят клиенты)" "http://127.0.0.1:$FACADE_PORT"
+    # ревью владельца 29.09 (демо сервер): дефолт 127.0.0.1 рождает ссылки,
+    # которые не открываются ни у кого, кроме самой машины установки. Для
+    # corporate-демо дефолт = LAN-адрес хоста, и фасад публикуется на нём же
+    # (override-файл ниже) - иначе ссылки из веб-чата ведут в никуда.
+    public_default="http://127.0.0.1:$FACADE_PORT"
+    if [ "$PROFILE" = "corporate" ] && [ "$DEMO" = 1 ]; then
+        lan_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' | head -1)
+        [ -n "$lan_ip" ] || lan_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+        [ -n "$lan_ip" ] && public_default="http://$lan_ip:$FACADE_PORT"
+    fi
+    ask_var VELES_PUBLIC_URL "Публичный URL фасада (как его видят клиенты)" "$public_default"
     ask_var VELES_ALLOWED_GROUPS "Группы доступа через запятую" "personal"
+    if [ "$PROFILE" = "corporate" ] && [ "$DEMO" = 1 ] && [ ! -f docker-compose.override.yml ]; then
+        # фасад в corporate не публикуется (безопасность), но демо-ссылки
+        # /v1/source должны открываться с машин клиентов - публикуем 8400
+        # только в демо-режиме (токен+подпись защищают)
+        cat > docker-compose.override.yml <<EOF
+services:
+  veles-facade:
+    ports:
+      - "$FACADE_PORT:$FACADE_PORT"
+EOF
+        ok "демо: фасад опубликован на :$FACADE_PORT (docker-compose.override.yml) - иначе ссылки источников не открываются"
+    fi
 
     if [ "$PROFILE" = "corporate" ]; then
         # дефолт - jwt (подписанный заголовок, секрет генерится и отдаётся WebUI);
