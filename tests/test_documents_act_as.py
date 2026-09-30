@@ -143,7 +143,7 @@ def test_act_as_creates_personal_doc(kb_env, monkeypatch) -> None:
     # email нормализован (lower/strip) в document_id, как в identity-режимах
     assert body["document_id"] == f"ivanov@corp.ru/{DOC_SLUG}.md"
 
-    job = wait_done(client, body["job_id"])
+    job = wait_done(client, body["job_id"], headers=OWNER)
     assert job["status"] == "done", job
     assert job["user_id"] == "ivanov@corp.ru"
     assert manifest_groups(kb_env["canonical"], body["document_id"]) == [
@@ -169,7 +169,7 @@ def test_act_as_static_search_and_owner_visibility(kb_env, monkeypatch) -> None:
         "/v1/documents", json={"text": DOC_TEXT, "title": DOC_TITLE},
         headers={**OWNER, **ACT_AS},
     )
-    job = wait_done(client, r.json()["job_id"])
+    job = wait_done(client, r.json()["job_id"], headers=OWNER)
     assert job["status"] == "done"
     texts = search_texts(client, headers=OWNER)
     assert any(DOC_MARK in t for t in texts)
@@ -187,7 +187,7 @@ def test_act_as_multipart(kb_env, monkeypatch) -> None:
     )
     assert r.status_code == 202
     assert r.json()["document_id"] == "ivanov@corp.ru/регламент.txt"
-    job = wait_done(client, r.json()["job_id"])
+    job = wait_done(client, r.json()["job_id"], headers=OWNER)
     assert job["status"] == "done"
     assert manifest_groups(kb_env["canonical"], "ivanov@corp.ru/регламент.txt") == [
         "user:ivanov@corp.ru"
