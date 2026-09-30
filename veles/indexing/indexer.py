@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -11,6 +12,28 @@ from ..canonical.store import iter_documents
 from .bm25 import Bm25Index
 from .embedder import EmbeddingProvider
 from .vector_store import FaissFlatStore, NumpyFlatStore, VectorStore
+
+
+# --- K18: детектор «утратил силу» по тексту узла ---
+# Формы: «утратил/утратила/утратили/утратило силу», причастная официальная
+# «признан утратившим силу», «не подлежит применению» (регистр любой).
+# Lookbehind «не » отсекает отрицание («не утратило силу и действует») -
+# нормализация выше гарантирует одиночные пробелы; на «не подлежит
+# применению» не распространяется (там «не» - часть самой фразы утраты).
+# Это метка СОДЕРЖИМОГО узла, не документа: официальный
+# статус акта на уровне документа (pravo.gov.ru) - будущая фаза. Пустышки-
+# заглушки «Утратил силу.» тоже метчатся, но в выдачу их режет K12-фильтр
+# (is_junk_node) - механизмы не связаны.
+_LOST_FORCE_RES = (
+    re.compile(r"(?<!не )(?:утратил[аои]?\s+силу|утративш[а-я]+\s+силу)"),
+    re.compile(r"не\s+подлежит\s+применению"),
+)
+
+
+def is_lost_force(text: str) -> bool:
+    """True, если текст узла содержит признак утраты силы нормы."""
+    t = " ".join((text or "").split()).lower().replace("ё", "е")
+    return any(rx.search(t) for rx in _LOST_FORCE_RES)
 
 
 @dataclass
@@ -80,6 +103,9 @@ def build_index(
                 # (revision-r*/ в каноне) - superseded; фильтр - в hybrid_search
                 "revision_id": doc.revision_id,
                 "status": doc.status,
+                # K18: метка «утратил силу» по тексту узла; в выдаче не фильтруется
+                # и ранжирование не меняет - только флаг в цитате (плашка в рендере)
+                "lost_force": is_lost_force(node.text),
             }
         if len(texts_batch) >= batch:
             _flush(bundle, embedder, texts_batch)

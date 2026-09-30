@@ -19,7 +19,7 @@ from .indexing.indexer import build_index, load_index
 from .indexing.vector_store import make_store
 from .policy.answer import decide
 from .policy.identifiers import extract_identifiers
-from .retrieval.retriever import hybrid_search
+from .retrieval.retriever import hybrid_search, lost_force_prefix
 
 
 def cmd_scan_corpus(args: argparse.Namespace) -> int:
@@ -136,7 +136,9 @@ def cmd_ask(args: argparse.Namespace) -> int:
         for ev in decision.evidence[:3]:
             for c in ev.citations:
                 hp = " > ".join(c.heading_path[-3:]) if c.heading_path else ""
-                print(f"  - {c.human()} {('| ' + hp) if hp else ''}")
+                # K18: плашка «утратил силу» перед цитатой lost_force-узла
+                plate = lost_force_prefix(c.lost_force)
+                print(f"  - {plate}{c.human()} {('| ' + hp) if hp else ''}")
     if decision.conflicts:
         print("возможные противоречащие редакции:")
         for c in decision.conflicts:

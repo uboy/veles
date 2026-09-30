@@ -19,6 +19,20 @@ import re
 # Лимит Telegram на сообщение с запасом (жёсткий лимит 4096)
 CHUNK_LIMIT = 3900
 
+# K18: плашка «утратил силу» перед цитатой lost_force-узла - тот же текст, что
+# veles.retrieval.retriever.LOST_FORCE_PREFIX. Контейнер моста не зависит от
+# пакета veles (Dockerfile.bridge ставит только httpx), поэтому строка живёт
+# здесь своей константой; от расползания держит тест
+# tests/test_lost_force.py::test_lost_force_plate_sync. В текущем пайплайне
+# /kb мост получает готовый markdown из render_chat_content (плашка уже
+# внутри текста), функция - для прямых рендеров цитат на стороне моста.
+LOST_FORCE_PLATE = "⚠ Норма утратила силу"
+
+
+def lost_force_prefix(lost_force: bool) -> str:
+    """Префикс-плашка lost_force для строки цитаты; без флага - пусто."""
+    return f"{LOST_FORCE_PLATE} - " if lost_force else ""
+
 _CODE_FENCE = re.compile(r"```([a-zA-Z0-9+_-]*)\n?(.*?)```", re.DOTALL)
 _INLINE_CODE = re.compile(r"`([^`]+?)`")
 _MD_IMAGE = re.compile(r"!\[[^\]]*\]\((https?://[^)\s]+)\)")

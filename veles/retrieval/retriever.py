@@ -24,11 +24,25 @@ class Citation:
     lines: list[int] | None
     node_version_id: str
     revision_id: str = "r1"  # ревизия документа (K3); у канона до 29.09 - r1
+    # K18: метка «утратил силу» по тексту узла (node_meta из индекса); ранжирование
+    # не меняет и узел не скрывает - только плашка перед цитатой в рендерах
+    lost_force: bool = False
 
     def human(self) -> str:
         where = f", строки {self.lines[0]}-{self.lines[1]}" if self.lines else ""
         rev = f", ред. {self.revision_id}" if self.revision_id not in ("", "r1") else ""
         return f"«{self.title}» {self.source_id}{rev}{where}"
+
+
+# K18: единый текст плашки lost_force для рендеров фасада и CLI. В tg_format
+# (мост) та же строка живёт своей константой: контейнеры фасада и моста не
+# делят код, синхронизацию держит тест tests/test_lost_force.py.
+LOST_FORCE_PREFIX = "⚠ Норма утратила силу"
+
+
+def lost_force_prefix(lost_force: bool) -> str:
+    """Префикс-плашка перед цитатой lost_force-узла; для обычных - пусто."""
+    return f"{LOST_FORCE_PREFIX} - " if lost_force else ""
 
 
 @dataclass
@@ -212,6 +226,9 @@ def hybrid_search(
             lines=prov.get("lines"),
             node_version_id=nid,
             revision_id=meta.get("revision_id", "r1"),
+            # K18: .get с дефолтом False - индексы до метки (старый meta.json
+            # без поля lost_force) читаются без пересборки
+            lost_force=bool(meta.get("lost_force", False)),
         )
         evidence.append(
             Evidence(

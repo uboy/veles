@@ -38,7 +38,7 @@ from ..policy.identity import (
     RequestIdentity,
     StaticOwnerResolver,
 )
-from ..retrieval.retriever import hybrid_search
+from ..retrieval.retriever import hybrid_search, lost_force_prefix
 from .documents import router as documents_router  # K4: загрузка документов
 from .groups import router as groups_router  # K7: список групп для загрузки
 from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
@@ -185,6 +185,9 @@ class VelesPipeline:
                 "node_version_id": c.node_version_id,
                 "revision_id": nmeta.get("revision_id", "r1"),
                 "asset": nmeta.get("asset"),
+                # K18: флаг «утратил силу»; обратно-совместимо - старые клиенты
+                # поле игнорируют, у индексов без метки всегда False
+                "lost_force": bool(nmeta.get("lost_force", False)),
             })
             evidence_texts.append(ev.text)
 
@@ -271,9 +274,12 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
     blocks = [answer, "", "Источники:"]
     for c in result["citations"]:
         where = f", строки {c['lines'][0]}-{c['lines'][1]}" if c.get("lines") else ""
-        label = f"[{c['n']}] «{c['title']}» {c['source_id']}{where}"
+        # K18: перед цитатой lost_force-узла - плашка (ранжирование не менялось,
+        # узел не скрыт; research: показывать с явной меткой статуса)
+        plate = lost_force_prefix(bool(c.get("lost_force")))
+        label = f"{plate}[{c['n']}] «{c['title']}» {c['source_id']}{where}"
         url = links.get(c["n"])
-        blocks.append(f"  [{c['n']}]({url}) «{c['title']}» {c['source_id']}{where}" if url
+        blocks.append(f"  {plate}[{c['n']}]({url}) «{c['title']}» {c['source_id']}{where}" if url
                       else f"  {label}")
     for url in images:
         blocks.append(f"![изображение]({url})")

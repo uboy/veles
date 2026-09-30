@@ -40,6 +40,7 @@ import numpy as np
 from ..canonical.model import CanonicalDocument
 from ..canonical.store import ingest_document
 from ..config import DEFAULT_ACCESS_GROUPS
+from ..indexing.indexer import is_lost_force
 from ..policy.identifiers import extract_identifiers
 
 logger = logging.getLogger("veles.ingest.queue")
@@ -348,6 +349,9 @@ def upsert_document(bundle, doc: CanonicalDocument, outcome, embedder) -> Upsert
             "asset": node.asset,
             "revision_id": doc.revision_id,
             "status": doc.status,
+            # K18: тот же детектор, что в build_index - пользовательская загрузка
+            # получает метку «утратил силу» сразу, без плановой пересборки
+            "lost_force": is_lost_force(node.text),
         }
 
     ids = list(new_meta)
