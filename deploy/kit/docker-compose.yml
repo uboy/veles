@@ -13,6 +13,10 @@ services:
     build:
       context: ../..
       dockerfile: deploy/kit/Dockerfile
+      args:
+        # 1 (дефолт) - CPU-сборка torch (безGPU-хост: компактнее в ~10 раз);
+        # 0 - стандартная сборка с CUDA (GPU-хост фасада).
+        TORCH_CPU: ${TORCH_CPU:-1}
     image: veles-facade:local
     restart: unless-stopped
     # фасад НЕ публикуется наружу: адресуем только внутри compose-сети
