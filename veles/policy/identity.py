@@ -149,8 +149,15 @@ class StaticOwnerResolver:
         """Группы владельца (K7): настроенные + all (неявно) + все определённые
         серверные - владелец админ, состав групп ему виден целиком. Произвольные
         access_groups вне конфига - как раньше: только с правом (группа в
-        allowed_groups), не автоматически."""
-        return set(self._groups) | {GROUP_ALL} | defined_group_ids()
+        allowed_groups), не автоматически.
+
+        K16: добавлен wildcard "*" - static-владелец и так админ для путей
+        чтения (source/asset/stats: _visible_by_groups пропускает по
+        ident.admin), а поиск групповой фильтр снимает только по "*". Без
+        wildcard поиск владельца не видел бы личные (user:<email>) документы,
+        загруженные через X-Veles-On-Behalf-Of, - в static-режиме их создатель
+        по поиску один и есть владелец."""
+        return set(self._groups) | {GROUP_ALL} | defined_group_ids() | {"*"}
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
         return RequestIdentity(user_id="", admin=True, groups=self.allowed_groups())
@@ -189,8 +196,13 @@ class JwtHeaderResolver:
     def allowed_groups(self) -> set[str]:
         """Базовые группы владельца/bearer-доступа (K7): настроенные + all +
         все определённые серверные. Пер-пользовательский membership в это
-        множество НЕ входит - он срезается по uid в _identity."""
-        return set(self._groups) | {GROUP_ALL} | defined_group_ids()
+        множество НЕ входит - он срезается по uid в _identity.
+
+        K16: wildcard "*" - bearer-владелец админ (RequestIdentity.admin=True),
+        а поиск снимает групповой фильтр только по "*"; без него поиск
+        владельца не видел бы личные user:<email> документы (act-as), которые
+        source/asset/stats владельцу и так видны по ident.admin."""
+        return set(self._groups) | {GROUP_ALL} | defined_group_ids() | {"*"}
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
         if self.mode == "jwt":
