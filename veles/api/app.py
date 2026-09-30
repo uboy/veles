@@ -343,6 +343,13 @@ def create_app(
             _pipeline()
         except Exception as e:  # noqa: BLE001 - прогрев не должен ронять сервис
             logging.getLogger("veles.api").warning("warmup не удался (соберётся лениво): %s", e)
+        # K17: прогрев reranker'а, если включён (VELES_RERANKER_MODEL) - в том же
+        # фоновом потоке; латентность загрузки модели пишется в лог veles.reranker.
+        # Пустой env - no-op (модель не ищется); провал загрузки - fail-open
+        # (негативный кэш, ответы уходят без реранка).
+        from ..retrieval.reranker import preload
+
+        preload()
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):

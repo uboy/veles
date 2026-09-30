@@ -57,6 +57,12 @@ class Evidence:
     dense_rank: int | None = None
     bm25_rank: int | None = None
     citations: list[Citation] = field(default_factory=list)
+    # K17: диагностика reranker'а (None = реранк не применялся). Органические
+    # rrf/rrf_base реранкер не трогает; confidence abstain-гейта и
+    # warn_conflict считаются по органическим скорам нового порядка топов -
+    # после реранка их значения могут отличаться от выключенного режима.
+    rerank_score: float | None = None
+    rerank_rank_hybrid: int | None = None
 
 
 # --- K12: мусорные узлы выдачи (из индекса НЕ удаляются, только из контекста) ---
@@ -111,6 +117,7 @@ def hybrid_search(
     codex_boost: float | None = None,
     filter_junk: bool | None = None,
     dedupe_channels: bool | None = None,
+    rerank_candidates: int | None = None,
 ) -> list[Evidence]:
     """Pre-retrieval authorization (инвариант 5) + ревизионный фильтр (K3) - один шов:
     узлы без пересечения групп с allowed_groups отсекаются до формирования evidence
@@ -125,7 +132,16 @@ def hybrid_search(
     в единицах вклада ранга 1 одного канала (bonus = codex_boost/(rrf_k+1));
     filter_junk - отсекать мусорные пустышки из выдачи (is_junk_node);
     dedupe_channels - снимать дубликаты узла внутри канала (см. dedupe_pairs;
-    с K14 дефолт True: на чистом индексе no-op, защищает от возврата дублей)."""
+    с K14 дефолт True: на чистом индексе no-op, защищает от возврата дублей).
+
+    K17: reranker - опциональный пост-этап (env VELES_RERANKER_MODEL, пусто/
+    не задано = выключено, поведение в точности прежнее: пул не строится,
+    модуль реранкера не импортируется). Включён - из ordered берутся верхние
+    rerank_candidates узлов (дефолт config.RERANK_CANDIDATES=25, бриф K17),
+    cross-encoder пересортировывает пул, наверх идут топ-k; rrf/rrf_base
+    остаются органическими (confidence не меняется), диагностика реранка -
+    в Evidence.rerank_score/rerank_rank_hybrid. Ошибка модели - fail-open:
+    обычный порядок, ответ не роняется (veles.retrieval.reranker)."""
     from ..config import DEFAULT_ACCESS_GROUPS
 
     if rrf_k is None:
@@ -144,6 +160,21 @@ def hybrid_search(
         from ..config import DEDUPE_CHANNELS
 
         dedupe_channels = DEDUPE_CHANNELS
+
+    # K17: reranker включён только непустым VELES_RERANKER_MODEL (конфиг читается
+    # на вызов - тесты подменяют атрибут config без переимпорта модуля). Выключен -
+    # пул не строится и модуль реранкера не импортируется (ноль регрессии).
+    from ..config import VELES_RERANKER_MODEL
+
+    rerank_on = bool(VELES_RERANKER_MODEL)
+    if rerank_on:
+        if rerank_candidates is None:
+            from ..config import RERANK_CANDIDATES
+
+            rerank_candidates = RERANK_CANDIDATES
+        pool_size = max(top_k, rerank_candidates)
+    else:
+        pool_size = top_k
 
     groups = allowed_groups or DEFAULT_ACCESS_GROUPS
 
@@ -209,7 +240,9 @@ def hybrid_search(
     ordered = sorted(rrf.items(), key=lambda x: -x[1])
     evidence: list[Evidence] = []
     for nid, score in ordered:
-        if len(evidence) >= top_k:
+        # без реранка - прежнее усечение top_k; с реранком пул шире (25), усечёт
+        # реранкер после пересортировки
+        if len(evidence) >= pool_size:
             break
         meta = bundle.node_meta.get(nid)
         if not meta:
@@ -241,4 +274,10 @@ def hybrid_search(
                 citations=[cite],
             )
         )
+    # K17: опциональный пост-этап - cross-encoder пересортировывает пул и
+    # усекает до top_k (fail-open внутри rerank: ошибка модели = входной порядок)
+    if rerank_on and len(evidence) > 1:
+        from . import reranker
+
+        evidence = reranker.rerank(query_text, evidence, top_k)
     return evidence
