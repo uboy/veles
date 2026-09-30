@@ -74,7 +74,14 @@ class HttpMock:
 @pytest.fixture()
 def pipe(monkeypatch, mod):
     def _make(http_mock):
-        monkeypatch.setattr(mod.urllib.request, "urlopen", http_mock)
+        class _FakeOpener:
+            def __init__(self, mock):
+                self.mock = mock
+
+            def open(self, req, timeout=None):
+                return self.mock(req, timeout=timeout)
+
+        monkeypatch.setattr(mod, "_OPENER", _FakeOpener(http_mock))
         p = mod.Pipe()
         p.valves.veles_url = "http://veles:8400"
         p.valves.veles_token = "owner-token"

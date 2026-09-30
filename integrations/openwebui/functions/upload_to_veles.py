@@ -44,15 +44,35 @@ import uuid
 from pydantic import BaseModel, Field
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Ревью K16 P2: редиректы запрещены - заголовки авторизации не должны
+    уезжать другому хосту; 3xx вернётся вызывающему как ошибка."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+_OPENER = None  # ревью K16: инъекционный открыватель - тесты подменяют моком
+
+
+def _opener():
+    global _OPENER
+    if _OPENER is None:
+        _OPENER = urllib.request.build_opener(_NoRedirect)
+    return _OPENER
+
+
 def _http_bytes(
     method: str, url: str, headers: dict, data: bytes | None, timeout: float
 ) -> tuple[int, bytes]:
     """Один HTTP-вызов stdlib-средствами (зависимостей у функции нет).
     Возвращает (статус, тело); HTTPError - не исключение, а статус с телом.
-    timeout - скаляр (urllib не умеет пары connect/read, как socket)."""
+    timeout - скаляр (urllib не умеет пары connect/read, как socket).
+    Ревью K16 P2: редиректы НЕ следуются - Authorization и X-Veles-On-Behalf-Of
+    ушли бы целевому хосту редиректа; 3xx возвращается как статус."""
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _opener().open(req, timeout=timeout) as resp:
             return resp.status, resp.read()
     except urllib.error.HTTPError as e:
         try:

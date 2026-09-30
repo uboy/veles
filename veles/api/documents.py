@@ -28,6 +28,7 @@ app.py в этот файл не перекраивался: контекст (i
 from __future__ import annotations
 
 import threading
+import hmac
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -101,7 +102,9 @@ def _acting_identity(request: Request, on_behalf_of: str) -> Optional[RequestIde
         return None
     state = _ctx(request)
     token = state["token"]
-    if not token or (request.headers.get("authorization") or "") != f"Bearer {token}":
+    auth = (request.headers.get("authorization") or "").encode("utf-8")
+    # ревью K16 P2: сравнение в константном времени (строка секретная)
+    if not token or not hmac.compare_digest(auth, f"Bearer {token}".encode("utf-8")):
         return None
     uid = validated_user_id(on_behalf_of)
     if uid is None:

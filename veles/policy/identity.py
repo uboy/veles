@@ -59,9 +59,13 @@ def validated_user_id(raw: str) -> Optional[str]:
     """Нормализует и проверяет uid (email) из доверенного источника
     (K16: заголовок X-Veles-On-Behalf-Of при владельческом токене).
     None - пустой или небезопасный (обход каталогов, разделители пути):
-    такой uid не должен попадать ни в document_id, ни в каталог L0."""
+    такой uid не должен попадать ни в document_id, ни в каталог L0.
+    Ревью K16 P2: плюс форма email и лимит длины - «!!!» давал каталог
+    uploads/!!!/, гигантский email - OSError при записи L0 (500)."""
     uid = normalize_user_id(raw)
     if not uid or _UNSAFE_USER_ID.search(uid):
+        return None
+    if len(uid) > 254 or not re.fullmatch(r"[\w.+-]+@[\w-]+(\.[\w-]+)+", uid):
         return None
     return uid
 
