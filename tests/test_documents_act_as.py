@@ -149,7 +149,7 @@ def test_act_as_creates_personal_doc(kb_env, monkeypatch) -> None:
     # static-режим: к личной группе добавлена дефолтная personal - единственный
     # читатель фасада (владелец) находит документ; в identity-режимах группа
     # чисто user:<email> (см. corp-тесты ниже)
-    assert manifest_groups(kb_env["canonical"], body["document_id"]) == [
+    assert sorted(manifest_groups(kb_env["canonical"], body["document_id"])) == [
         "personal",
         "user:ivanov@corp.ru",
     ]
@@ -193,7 +193,9 @@ def test_act_as_multipart(kb_env, monkeypatch) -> None:
     assert r.json()["document_id"] == "ivanov@corp.ru/регламент.txt"
     job = wait_done(client, r.json()["job_id"], headers=OWNER)
     assert job["status"] == "done"
-    assert manifest_groups(kb_env["canonical"], "ivanov@corp.ru/регламент.txt") == [
+    assert sorted(
+        manifest_groups(kb_env["canonical"], "ivanov@corp.ru/регламент.txt")
+    ) == [
         "personal",
         "user:ivanov@corp.ru",
     ]
