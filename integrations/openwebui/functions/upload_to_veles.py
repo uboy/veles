@@ -41,10 +41,11 @@ from pydantic import BaseModel, Field
 
 
 def _http_bytes(
-    method: str, url: str, headers: dict, data: bytes | None, timeout
+    method: str, url: str, headers: dict, data: bytes | None, timeout: float
 ) -> tuple[int, bytes]:
     """Один HTTP-вызов stdlib-средствами (зависимостей у функции нет).
-    Возвращает (статус, тело); HTTPError - не исключение, а статус с телом."""
+    Возвращает (статус, тело); HTTPError - не исключение, а статус с телом.
+    timeout - скаляр (urllib не умеет пары connect/read, как socket)."""
     req = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
@@ -214,7 +215,7 @@ class Pipe:
         headers = {**auth_headers, **on_behalf_headers, "Content-Type": content_type}
         try:
             status, resp_body = _http_bytes(
-                "POST", f"{base_url}/v1/documents", headers, body_bytes, (10, 60)
+                "POST", f"{base_url}/v1/documents", headers, body_bytes, 60.0
             )
         except RuntimeError as e:
             return f"⚠ «{name}»: {e}."
@@ -252,7 +253,7 @@ class Pipe:
                     f"{base_url}/v1/documents/jobs/{job_id}",
                     auth_headers,
                     None,
-                    (10, 30),
+                    30.0,
                 )
             except RuntimeError as e:
                 return f"⚠ «{name}»: документ принят, но статус недоступен: {e}."
