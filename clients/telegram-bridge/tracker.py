@@ -60,12 +60,14 @@ def _atomic_write(path: Path, text: str) -> None:
             f.write(text)
             f.flush()
             os.fsync(f.fileno())
-        for attempt in range(10):
+        # окно ~1.6 с суммарно: у агрессивного читателя (тест, индексатор
+        # Windows) микрозазоры между открытиями могут не попасться дольше
+        for attempt in range(40):
             try:
                 os.replace(tmp, path)
                 break
             except PermissionError:
-                if attempt == 9:
+                if attempt == 39:
                     raise
                 time.sleep(0.002 * (attempt + 1))
     finally:

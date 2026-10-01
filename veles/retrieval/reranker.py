@@ -87,15 +87,6 @@ def _load(model_name: str) -> Scorer:
     return model
 
 
-def _predict(scorer: Scorer, pairs: Sequence[Sequence[str]]):
-    """predict с env-батчем (для длинных входов на GPU); дефолт - штатный predict."""
-    from ..config import VELES_RERANKER_BATCH
-
-    if VELES_RERANKER_BATCH and VELES_RERANKER_BATCH != 32:
-        return scorer.predict(pairs, batch_size=max(1, VELES_RERANKER_BATCH))
-    return scorer.predict(pairs)
-
-
 def preload() -> None:
     """Прогрев: загрузить модель, если reranker включён в конфиге.
 

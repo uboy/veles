@@ -77,7 +77,22 @@ CONFLICT_SCORE_DELTA = 0.05
 # для GPU-бенчей (батч и обрезка длинных входов; 0 = штатные дефолты модели).
 VELES_RERANKER_MODEL = os.environ.get("VELES_RERANKER_MODEL", "")
 VELES_RERANKER_DEVICE = os.environ.get("VELES_RERANKER_DEVICE", "cpu")
-VELES_RERANKER_MAX_LENGTH = int(os.environ.get("VELES_RERANKER_MAX_LENGTH", "0"))
-VELES_RERANKER_BATCH = int(os.environ.get("VELES_RERANKER_BATCH", "0"))
+
+
+def _env_int(name: str, default: int) -> int:
+    """int из env без роняния импорта: опечатка в .env кита не должна
+    валить конфиг целиком (facade ушёл бы в crash-loop) - дефолт + warning."""
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        print(f"config: {name}={raw!r} не целое - беру {default}", flush=True)
+        return default
+
+
+VELES_RERANKER_MAX_LENGTH = _env_int("VELES_RERANKER_MAX_LENGTH", 0)
+VELES_RERANKER_BATCH = _env_int("VELES_RERANKER_BATCH", 0)
 # Глубина пула кандидатов под rerank (узлов после RRF/буста; бриф K17 - 25).
 RERANK_CANDIDATES = 25

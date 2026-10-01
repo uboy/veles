@@ -216,6 +216,12 @@ def _asset_link(public_url: str, token: str, citation: dict) -> str:
     return f"{public_url}/v1/asset/{doc}/{name}" + (f"?{q}" if q else "")
 
 
+# K18: плашка утраты силы - тот же текст, что LOST_FORCE_PREFIX фасада и
+# tg_format (функция standalone, контейнеры не делят код; от расползания -
+# тест-синхронизация test_lost_force_plate_sync, прецедент tg_format)
+LOST_FORCE_PLATE = "⚠ Норма утратила силу - "
+
+
 def _render_answer(result: dict, public_url: str, token: str) -> str:
     """Рендер ответа /v1/knowledge/query - тот же, что у veles-knowledge:
     сноски [n] в тексте синтеза -> [название документа](ссылка),
@@ -254,9 +260,10 @@ def _render_answer(result: dict, public_url: str, token: str) -> str:
     for c in citations:
         lines = c.get("lines") or []
         where = f", строки {lines[0]}-{lines[1]}" if len(lines) >= 2 else ""
+        plate = LOST_FORCE_PLATE if c.get("lost_force") else ""
         url = links.get(c["n"])
-        entry = f"  [{c['n']}]({url}) «{c.get('title')}» {c.get('source_id')}{where}" if url else (
-            f"  [{c['n']}] «{c.get('title')}» {c.get('source_id')}{where}"
+        entry = f"  {plate}[{c['n']}]({url}) «{c.get('title')}» {c.get('source_id')}{where}" if url else (
+            f"  {plate}[{c['n']}] «{c.get('title')}» {c.get('source_id')}{where}"
         )
         blocks.append(entry)
     # изображения-цитаты (PDF) - как в render_chat_content фасада

@@ -72,7 +72,12 @@ def test_atomic_write_reader_sees_whole_file(tmp_path) -> None:
 
     def reader() -> None:
         while not stop.is_set():
-            data = target.read_text(encoding="utf-8")
+            try:
+                data = target.read_text(encoding="utf-8")
+            except PermissionError:
+                # Windows: транзиентный отказ, пока файл заменяется (фикс
+                # писателя ретраит replace); не прерываем проверку инварианта
+                continue
             if data not in (old_text, new_text):
                 partial.append(data[:80])
 

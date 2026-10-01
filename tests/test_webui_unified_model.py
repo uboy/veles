@@ -501,3 +501,31 @@ def test_frontmatter_compat(mod) -> None:
     assert lines[0].strip() == '"""'
     head = "\n".join(lines[1:10])
     assert "title:" in head and "version:" in head
+
+def test_lost_force_plate_matches_facade(mod) -> None:
+    """P1 целостного ревью: плашка K18 в рендере единой модели обязана
+    совпадать байт в байт с LOST_FORCE_PREFIX фасада (три клиента - три
+    копии константы, расползание ловит этот тест)."""
+    import sys
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parents[1] / "veles"))
+    from veles.retrieval.retriever import lost_force_prefix
+
+    assert mod.LOST_FORCE_PLATE == lost_force_prefix(True)
+
+    result = {
+        "decision": "answer",
+        "answer": "Ответ [1].",
+        "citations": [
+            {
+                "n": 1,
+                "title": "НК РФ",
+                "document_id": "docs/nk.pdf",
+                "source_id": "nk.pdf",
+                "node_version_id": "nv1",
+                "lost_force": True,
+                "lines": [5, 9],
+            }
+        ],
+    }
+    out = mod._render_answer(result, "http://veles:8400", "tok")
+    assert "⚠ Норма утратила силу - [1]" in out
