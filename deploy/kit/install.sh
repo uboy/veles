@@ -244,7 +244,10 @@ else
         [ -n "$lan_ip" ] && public_default="http://$lan_ip:$FACADE_PORT"
     fi
     ask_var VELES_PUBLIC_URL "Публичный URL фасада (как его видят клиенты)" "$public_default"
-    ask_var VELES_ALLOWED_GROUPS "Группы доступа через запятую" "personal"
+    # K21: эта настройка = ОБЩИЕ группы (видны всем пользователям). corporate-дефолт all:
+    # "personal" здесь делал личную группу владельца общей - пользователи видели весь корпус
+    if [ "$PROFILE" = "corporate" ]; then groups_default="all"; else groups_default="personal"; fi
+    ask_var VELES_ALLOWED_GROUPS "Общие группы доступа через запятую" "$groups_default"
     if [ "$PROFILE" = "corporate" ] && [ "$DEMO" = 1 ] && [ ! -f docker-compose.override.yml ]; then
         # фасад в corporate не публикуется (безопасность), но демо-ссылки
         # /v1/source должны открываться с машин клиентов - публикуем 8400
