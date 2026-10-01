@@ -4,16 +4,16 @@
   "title": "Регламент отпусков ООО Ромашка",
   "document_type": "summary",
   "status": "current",
-  "sha256": "040de06e622ea974a3c402113224d37a8d4952f41692577258a3615fbf13d0f5",
+  "sha256": "98a30620109a36904db10b0ce6f10d2ca930ed84a44c9c0d2cfb7f870d826668",
   "parser_profile": "txt-md:0.1",
   "access_groups": [
-    "personal"
+    "all"
   ],
   "derived_from": [
     "onedev-vyshka:Регламент отпусков ООО Ромашка.md"
   ],
   "previous_revision": null,
-  "ingested_at": "2026-09-29T18:21:46+00:00",
+  "ingested_at": "2026-10-01T20:45:07+00:00",
   "ingested_by": "demo-build",
   "assets": {}
 }

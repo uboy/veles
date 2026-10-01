@@ -4,16 +4,16 @@
   "title": "FAQ службы поддержки",
   "document_type": "summary",
   "status": "current",
-  "sha256": "1e28354603c5a42e5eba0068e1006bfe5cbdaba57a5ae40be47b9c0258c11945",
+  "sha256": "51177fe57a5d0af7ac1951c468e192c6fe87f0d67fbeb664e54cf92f290e8ae8",
   "parser_profile": "txt-md:0.1",
   "access_groups": [
-    "personal"
+    "all"
   ],
   "derived_from": [
     "onedev-vyshka:FAQ службы поддержки.md"
   ],
   "previous_revision": null,
-  "ingested_at": "2026-09-29T18:21:46+00:00",
+  "ingested_at": "2026-10-01T20:45:07+00:00",
   "ingested_by": "demo-build",
   "assets": {}
 }

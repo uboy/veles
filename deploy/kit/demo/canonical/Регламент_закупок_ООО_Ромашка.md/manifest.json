@@ -4,16 +4,16 @@
   "title": "Регламент закупок ООО Ромашка",
   "document_type": "summary",
   "status": "current",
-  "sha256": "4d60b7023f00bd365040ae63e37552a54f37e18ec18c1c9534bcb9d9a61f8529",
+  "sha256": "06218d77efa91247e41b430dbcd5d9b58a272092f4e2ac83c501553b36bc7132",
   "parser_profile": "txt-md:0.1",
   "access_groups": [
-    "personal"
+    "all"
   ],
   "derived_from": [
     "onedev-vyshka:Регламент закупок ООО Ромашка.md"
   ],
   "previous_revision": null,
-  "ingested_at": "2026-09-29T18:21:46+00:00",
+  "ingested_at": "2026-10-01T20:45:07+00:00",
   "ingested_by": "demo-build",
   "assets": {}
 }
