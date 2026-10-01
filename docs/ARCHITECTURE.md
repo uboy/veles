@@ -27,8 +27,9 @@ Veles — база знаний с RAG и верифицируемыми цит�
 1. **Слои L0/L1/L2.** L0 — неизменяемые оригиналы. L1a — канонические документы в схеме
    проекта; L1b — курируемые знания со статусами. L2 — производные поисковые индексы:
    перестраиваются 100% из L1 (полностью offline; L0→L1 — offline при наличии локально
-   установленных артефактов парсера/моделей). Версии canonical schema, парсера,
-   embedding- и reranker-моделей фиксируются в данных.
+   установленных артефактов парсера/моделей). Версии canonical schema, парсера и
+   embedding-модели фиксируются в данных (meta индекса); фиксация reranker-модели -
+   цель стандарта, в реализации среза meta несёт только embed-модель.
 2. **CanonicalDocument принадлежит проекту.** Парсер — адаптер (Docling, PyMuPDF,
    Markdown, MinerU…). Зависимость от парсера не должна превращаться в lock-in так же,
    как зависимость от векторной БД.
@@ -49,8 +50,10 @@ Veles — база знаний с RAG и верифицируемыми цит�
    retrieval-движок для всех клиентов.
 7. **Policy-driven evidence expansion.** Подтягивание контекста (родитель, соседи,
    таблицы) — стратегия по типу документа, не один универсальный алгоритм (см. §6).
-8. **Version/conflict semantics.** Статусы `current`/`superseded`/`approved`/`obsolete`
-   фильтруются при поиске; противоречие двух действующих редакций — явное
+8. **Version/conflict semantics.** При поиске фильтруются статусы: в реализации -
+   `current`/`superseded` (канон) плюс tombstone `deleted` удалённых документов;
+   `approved`/`obsolete` - целевые статусы стандарта, в срезе не заведены.
+   Противоречие двух действующих редакций - явное
    `warn_conflict`, а не молчаливый выбор и не «ответа нет».
 9. **Один канонический API.** `POST /v1/knowledge/query` — native API (answer, evidence,
    citations, answerability, request_id). `POST /v1/chat/completions` — compatibility-фасад
@@ -93,7 +96,9 @@ WRITE PATH:  SOURCES → INGESTION → CANONICAL STORE → INDEXER → RETRIEVAL
 
 Отдельных архитектурных сущностей «Universal LLM Gateway», «Deterministic Router»,
 «Answerability Gate» нет: LLM-эндпоинты — конфигурация провайдера; запрос «пункт 12.4» —
-retrieval hint в RequestContext; отказ — исход AnswerPolicy.
+retrieval hint в RequestContext; отказ — исход AnswerPolicy. EVIDENCE BUILDER
+в реализации среза - provenance без расширения: hybrid_search отдаёт flat top-k
+(policy-driven expansion - цель, см. §5).
 
 ## 4. Модель данных
 
@@ -131,7 +136,8 @@ L1b (курируемое) несёт `content_kind: claim|note|synthesis`, `aut
 ## 5. Retrieval и ответ
 
 Кандидаты — по листовым узлам; в поисковый текст детерминированно добавляется путь
-заголовков. После fusion/rerank — расширение контекста по политике типа документа:
+заголовков. После fusion/rerank — расширение контекста по политике типа документа
+(цель стандарта; в реализации среза - flat top-k без расширения):
 
 | Тип | Hit | Расширение |
 |---|---|---|
@@ -151,6 +157,10 @@ Retrieval-scores пользователю не показываются (шка�
 diagnostics.
 
 ## 6. Провайдеры и профили
+
+> Состав этого раздела - **целевой стандарт**, не описание текущего кода. Реализация
+> среза: faiss/numpy + BM25 (свой Okapi), канон JSONL (`nodes.jsonl`), LLM по
+> OpenAI-compatible env (SQLite, Qdrant Local и llama-cpp из профиля ниже в коде нет).
 
 ```
 VectorStore      local | server (один интерфейс; granularity подбирается по документу)
