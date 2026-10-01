@@ -1,0 +1,136 @@
+=== rerun 2026-10-01 2026-10-01T19:46:32+03:00 | base golden-k14 ===
+live: индекс <server-home>/proj/veles-bench/veles/data/index (read-only), модель intfloat/multilingual-e5-small
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 15392.65it/s]
+live: 127499 узлов
+  20/72
+  40/72
+  60/72
+
+# retrieval-bench [live] (rrf_k=None, w=(1.0,1.0), depth=None, codex_boost=None, filter_junk=False, dedupe=False)
+golden: 72 вопросов, answerable 57
+**Итого**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.983 | 0.860 | 0.915 | 0.635 |
+
+**По provenance**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.983 | 0.860 | 0.915 | 0.635 |
+| auto | 31 | 1.000 | 0.774 | 0.876 | 0.587 |
+| manual | 3 | 1.000 | 1.000 | 1.000 | 0.733 |
+| miniqa | 10 | 1.000 | 1.000 | 1.000 | 0.540 |
+| rrncb | 13 | 0.923 | 0.923 | 0.923 | 0.800 |
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.983 | 0.860 | 0.915 | 0.635 |
+| rrncb | 16 | 1.000 | 0.938 | 0.969 | 0.650 |
+| кодексы | 20 | 0.950 | 0.850 | 0.892 | 0.810 |
+| лекции | 21 | 1.000 | 0.809 | 0.897 | 0.457 |
+
+промахи R@5 (1): k11-013
+=== base rrncb50-k14 2026-10-01T19:47:00+03:00 ===
+live: индекс <server-home>/proj/veles-bench/veles/data/index (read-only), модель intfloat/multilingual-e5-small
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 13548.02it/s]
+live: 127499 узлов
+  20/50
+  40/50
+
+# retrieval-bench [live] (rrf_k=None, w=(1.0,1.0), depth=None, codex_boost=None, filter_junk=False, dedupe=False)
+golden: 50 вопросов, answerable 50
+**Итого**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 1.000 | 0.600 | 0.724 | 0.788 |
+
+**По provenance**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 1.000 | 0.600 | 0.724 | 0.788 |
+| rrncb50 | 50 | 1.000 | 0.600 | 0.724 | 0.788 |
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 1.000 | 0.600 | 0.724 | 0.788 |
+| rrncb | 14 | 1.000 | 0.500 | 0.644 | 0.714 |
+| кодексы | 36 | 1.000 | 0.639 | 0.755 | 0.817 |
+
+=== v2m3 golden-k14 2026-10-01T19:47:17+03:00 ===
+live: индекс <server-home>/proj/veles-bench/veles/data/index (read-only), модель intfloat/multilingual-e5-small
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 15120.22it/s]
+live: 127499 узлов
+Loading weights:   0%|          | 0/393 [00:00<?, ?it/s]Loading weights: 100%|██████████| 393/393 [00:00<00:00, 13492.25it/s]
+  20/72
+  40/72
+  60/72
+
+# retrieval-bench [live] (rrf_k=None, w=(1.0,1.0), depth=None, codex_boost=None, filter_junk=False, dedupe=False)
+golden: 72 вопросов, answerable 57
+**Итого**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.965 | 0.807 | 0.873 | 0.614 |
+
+**По provenance**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.965 | 0.807 | 0.873 | 0.614 |
+| auto | 31 | 1.000 | 0.935 | 0.958 | 0.561 |
+| manual | 3 | 1.000 | 1.000 | 1.000 | 0.800 |
+| miniqa | 10 | 1.000 | 0.900 | 0.950 | 0.460 |
+| rrncb | 13 | 0.846 | 0.385 | 0.580 | 0.815 |
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 57 | 0.965 | 0.807 | 0.873 | 0.614 |
+| rrncb | 16 | 1.000 | 0.938 | 0.969 | 0.662 |
+| кодексы | 20 | 0.900 | 0.550 | 0.687 | 0.790 |
+| лекции | 21 | 1.000 | 0.952 | 0.976 | 0.409 |
+
+промахи R@5 (2): k11-001, k11-009
+=== v2m3 rrncb50-k14 2026-10-01T19:57:04+03:00 ===
+live: индекс <server-home>/proj/veles-bench/veles/data/index (read-only), модель intfloat/multilingual-e5-small
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 13472.36it/s]
+live: 127499 узлов
+Loading weights:   0%|          | 0/393 [00:00<?, ?it/s]Loading weights: 100%|██████████| 393/393 [00:00<00:00, 13863.19it/s]
+  20/50
+  40/50
+
+# retrieval-bench [live] (rrf_k=None, w=(1.0,1.0), depth=None, codex_boost=None, filter_junk=False, dedupe=False)
+golden: 50 вопросов, answerable 50
+**Итого**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 0.740 | 0.400 | 0.525 | 0.776 |
+
+**По provenance**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 0.740 | 0.400 | 0.525 | 0.776 |
+| rrncb50 | 50 | 0.740 | 0.400 | 0.525 | 0.776 |
+
+**По домену**
+
+| ГРУППА | N | R@5 | top1 | MRR | P@5 |
+|---|---|---|---|---|---|
+| TOTAL | 50 | 0.740 | 0.400 | 0.525 | 0.776 |
+| rrncb | 14 | 0.786 | 0.500 | 0.589 | 0.771 |
+| кодексы | 36 | 0.722 | 0.361 | 0.500 | 0.778 |
+
+промахи R@5 (13): rrncb50-005, rrncb50-007, rrncb50-010, rrncb50-012, rrncb50-013, rrncb50-016, rrncb50-019, rrncb50-024, rrncb50-035, rrncb50-038, rrncb50-043, rrncb50-046, rrncb50-048
+=== DONE 2026-10-01T20:04:06+03:00 ===
