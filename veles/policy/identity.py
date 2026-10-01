@@ -158,6 +158,11 @@ class StaticOwnerResolver:
         в поиске не видит (K4/K7, покрыто негативами)."""
         return set(self._groups) | {GROUP_ALL} | defined_group_ids()
 
+    def base_groups(self) -> set[str]:
+        """Базовые настроенные группы (K21, act-as для чтения): только VELES_ALLOWED_GROUPS,
+        без производных all/определённых - act-as-личность их получает отдельно."""
+        return set(self._groups)
+
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
         return RequestIdentity(user_id="", admin=True, groups=self.allowed_groups())
 
@@ -199,6 +204,11 @@ class JwtHeaderResolver:
         "*": bearer-владелец не должен видеть документы, ограниченные
         админом через access_groups= (K4/K7)."""
         return set(self._groups) | {GROUP_ALL} | defined_group_ids()
+
+    def base_groups(self) -> set[str]:
+        """Базовые настроенные группы (K21, act-as для чтения): только VELES_IDENTITY_GROUPS,
+        без производных all/определённых - act-as-личность их получает отдельно."""
+        return set(self._groups)
 
     def resolve(self, headers: Mapping[str, str]) -> Optional[RequestIdentity]:
         if self.mode == "jwt":

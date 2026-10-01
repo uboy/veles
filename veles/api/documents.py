@@ -52,6 +52,7 @@ from ..ingest.queue import (
     user_dir,
     user_quota_lock,
 )
+from ..indexing.indexer import INDEX_LOCK
 from ..policy.groups import GROUP_ALL, defined_group_ids, group_exists
 from ..policy.identity import RequestIdentity, validated_user_id
 
@@ -436,11 +437,14 @@ def delete_document(
     )
     if pipeline is not None:
         # decide(): удалённый заголовок больше не «известный документ», если его
-        # не несёт ни один живой узел
+        # не несёт ни один живой узел. K21: снапшот под INDEX_LOCK - воркер
+        # очереди расширяет node_meta, итерация по живому dict небезопасна
         title = (info.get("title") or "").strip()
+        with INDEX_LOCK:
+            metas = list(pipeline.bundle.node_meta.values())
         if title and not any(
             m.get("title") == title and m.get("status") != "deleted"
-            for m in pipeline.bundle.node_meta.values()
+            for m in metas
         ):
             pipeline.doc_titles.discard(title)
 

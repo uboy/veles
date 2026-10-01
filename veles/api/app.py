@@ -29,14 +29,16 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 
 from ..config import INDEX_DIR, VELES_PUBLIC_URL, VELES_SOURCE_ROOTS
 from ..indexing.embedder import SentenceTransformersProvider
-from ..indexing.indexer import IndexBundle, load_index
+from ..indexing.indexer import INDEX_LOCK, IndexBundle, load_index
 from ..policy.answer import decide
+from ..policy.groups import GROUP_ALL, membership_of
 from ..policy.identifiers import extract_codex_refs, extract_identifiers
 from ..policy.identity import (
     IdentityResolver,
     JwtHeaderResolver,
     RequestIdentity,
     StaticOwnerResolver,
+    validated_user_id,
 )
 from ..retrieval.retriever import hybrid_search, lost_force_prefix
 from .documents import router as documents_router  # K4: загрузка документов
@@ -137,7 +139,9 @@ def _resolve_revision(bundle: IndexBundle, revision: Optional[str]) -> Optional[
         raise HTTPException(
             status_code=400, detail="revision: ожидается 'all', 'current' или 'r<номер>'"
         )
-    known = {m.get("revision_id", "r1") for m in bundle.node_meta.values()}
+    # K21: снапшот под INDEX_LOCK - воркер очереди расширяет node_meta
+    with INDEX_LOCK:
+        known = {m.get("revision_id", "r1") for m in bundle.node_meta.values()}
     if revision not in known:
         raise HTTPException(status_code=400, detail=f"неизвестная ревизия: {revision}")
     return revision
@@ -318,6 +322,14 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
                 f"⚠ Возможны противоречащие редакции: {listing}.",
                 "Уточните, какая редакция вам нужна.",
             ]
+    if result.get("diagnostics", {}).get("llm_error"):
+        # K21: без этой приписки при недоступности LLM пользователь видит
+        # сырую выдержку и не понимает, что синтез не работал
+        blocks += [
+            "",
+            "⚠ Синтез нейросетью временно недоступен - выше показана выдержка "
+            "из документа без обработки. Попробуйте задать вопрос ещё раз позже.",
+        ]
     return "\n".join(blocks)
 
 
@@ -344,8 +356,11 @@ def create_app(
         # allowed_groups резолвит СЕРВЕР из личности (инвариант 5), не клиент
         "resolver": identity_resolver,
         "identity_mode": mode,
-        # секрет подписанных ссылок; пусто (и токена нет) - подпись не mint'ится
-        "link_secret": os.environ.get("VELES_LINK_SECRET", "") or token,
+        # секрет подписанных ссылок (K21): ТОЛЬКО явный VELES_LINK_SECRET; раньше
+        # пустой секрет замещался владельческим токеном - смешение ключевого
+        # материала и bearer (P2 ревью 01.10). Пусто - подписи не mint'ятся,
+        # цитаты несут token= как раньше
+        "link_secret": os.environ.get("VELES_LINK_SECRET", ""),
     }
 
     _pipeline_lock = __import__("threading").Lock()
@@ -439,6 +454,39 @@ def create_app(
     # query/chat (инвариант 6); app.py больше ничего о загрузке не знает
     state["identity_fn"] = _identity
     state["pipeline_fn"] = _pipeline
+
+    def _acting_read_identity(
+        request: Request, authorization: str, on_behalf_of: str
+    ) -> Optional[RequestIdentity]:
+        """K21: личность «от имени пользователя» для ЧТЕНИЯ (query/stats).
+
+        Доверие то же, что у act-as-загрузки (K16): заголовок
+        X-Veles-On-Behalf-Of принимается ТОЛЬКО при точном совпадении bearer с
+        владельческим токеном (его ставит Pipe-функция, админ-установленная в
+        WebUI); без владельческого токена заголовок молча игнорируется.
+        Группы - как у реального пользователя в identity-режиме: all + личная
+        user:<uid> + membership из groups.json (+ базовые VELES_IDENTITY_GROUPS
+        в identity-режимах; в static базу владельца НЕ наследуем - там его
+        личные группы). Админ-wildcard не даётся: act-as - обычный пользователь.
+        """
+        if not on_behalf_of.strip():
+            return None
+        state_token = state["token"]
+        auth = (request.headers.get("authorization") or "").encode("utf-8")
+        if not state_token or not hmac.compare_digest(
+            auth, f"Bearer {state_token}".encode("utf-8")
+        ):
+            return None
+        uid = validated_user_id(on_behalf_of)
+        if uid is None:
+            raise HTTPException(
+                status_code=400,
+                detail="X-Veles-On-Behalf-Of: ожидается email пользователя",
+            )
+        groups = {GROUP_ALL, f"user:{uid}"} | membership_of(uid)
+        if state["identity_mode"] != "static":
+            groups |= state["resolver"].base_groups()
+        return RequestIdentity(user_id=uid, admin=False, groups=groups)
 
     def _sig_ok(document_id: str, name_or_node: str, exp: str, sig: str) -> bool:
         """Проверка подписанной ссылки: HMAC от document_id|name_or_node|exp."""
@@ -559,7 +607,7 @@ def create_app(
 
         from ..canonical.store import _doc_dir
 
-        roots = [Path(p) for p in os.environ.get("VELES_DATA", "").split(":") if p.strip()]
+        roots = [Path(p) for p in os.environ.get("VELES_DATA", "").split(os.pathsep) if p.strip()]
         if not roots:
             roots = [Path(__file__).resolve().parents[2] / "data"]
         doc = None
@@ -681,13 +729,22 @@ def create_app(
         клиенты; строится из мета узлов загруженного индекса, без похода в L2.
         Документы/узлы - по тем же группам идентификации, что поиск (P0 ревью
         K4): чужие загрузки не видны ни в списке, ни в totals.nodes.
+        K21: act-as срезает оглавление до личности пользователя - как поиск.
         """
         ident = _identity(request, authorization)
+        acting = _acting_read_identity(
+            request, authorization, request.headers.get("X-Veles-On-Behalf-Of") or ""
+        )
+        if acting is not None:
+            ident = acting
         p = _pipeline()
         docs: dict[str, dict] = {}
         superseded_nodes = 0
         visible_nodes = 0
-        for m in p.bundle.node_meta.values():
+        # K21: снапшот под INDEX_LOCK - воркер очереди расширяет node_meta
+        with INDEX_LOCK:
+            meta_snapshot = list(p.bundle.node_meta.values())
+        for m in meta_snapshot:
             status = m.get("status", "current")
             # K10: удалённые (tombstone) узлы не видны никому, в т.ч. админу,
             # и в totals/счётчик ревизий не попадают
@@ -727,17 +784,22 @@ def create_app(
         req: QueryRequest, request: Request, authorization: str = Header(default="")
     ) -> dict:
         ident = _identity(request, authorization)
+        # K21: поиск от имени конкретного пользователя WebUI (доверенный Pipe-клиент
+        # с владельческим токеном) - иначе вопрос любого пользователя ищет по всей базе
+        acting = _acting_read_identity(
+            request, authorization, request.headers.get("X-Veles-On-Behalf-Of") or ""
+        )
+        if acting is not None:
+            ident = acting
         p = _pipeline()
         revision = _resolve_revision(p.bundle, req.revision)
         result = p.answer(
             req.query, req.top_k, req.use_llm,
             allowed_groups=ident.groups, revision=revision,
         )
-        # K20: тот же режим ссылок, что у текстового рендера chat (static ->
-        # token=, identity-режимы -> подписанные exp+sig)
-        link_secret = (
-            state["link_secret"] if state["identity_mode"] != "static" else ""
-        )
+        # K20/K21: подписанные ссылки при заданном секрете в ЛЮБОМ режиме -
+        # владельческий токен в URL цитат не попадает; без секрета - token= как раньше
+        link_secret = state["link_secret"]
         return attach_citation_links(result, state["token"], link_secret)
 
     @app.post("/v1/chat/completions")
@@ -759,9 +821,8 @@ def create_app(
             allowed_groups=ident.groups, revision=revision,
         )
         llm = p.llm
-        link_secret = (
-            state["link_secret"] if state["identity_mode"] != "static" else ""
-        )
+        # K20/K21: подписанные ссылки при заданном секрете в любом режиме
+        link_secret = state["link_secret"]
         # K20: те же ссылки и в данные цитат (veles.citations), текстовый рендер
         # свои ссылки строит сам - его вывод не меняется
         attach_citation_links(result, state["token"], link_secret)

@@ -283,6 +283,13 @@ def _render_answer(result: dict, public_url: str, token: str) -> str:
                 f"⚠ Возможны противоречащие редакции: {listing}.",
                 "Уточните, какая редакция вам нужна.",
             ]
+    if (result.get("diagnostics") or {}).get("llm_error"):
+        # K21: при недоступности LLM человек видит сырую выдержку - предупредим
+        blocks += [
+            "",
+            "⚠ Синтез нейросетью временно недоступен - выше показана выдержка "
+            "из документа без обработки. Попробуйте задать вопрос ещё раз позже.",
+        ]
     return "\n".join(blocks)
 
 
@@ -432,13 +439,16 @@ class Pipe:
     # ----------------------------------------------------------------- вопрос
 
     def _ask(self, question: str, *, auth_headers: dict, base_url: str,
-             public_url: str, token: str) -> str:
+             public_url: str, token: str, on_behalf_headers: dict | None = None) -> str:
         """Ответ по базе: POST /v1/knowledge/query -> рендер цитат.
+        on_behalf_headers (K21): X-Veles-On-Behalf-Of - поиск от имени текущего
+        пользователя WebUI (фасад принимает его только у владельческого токена),
+        без него вопрос искал бы по ВСЕЙ базе, включая чужие личные документы.
         Ошибки - человеческим текстом, исключения наружу не идут."""
         payload = json.dumps(
             {"query": question, "top_k": 5, "use_llm": True}
         ).encode("utf-8")
-        headers = {**auth_headers, "Content-Type": "application/json"}
+        headers = {**auth_headers, **(on_behalf_headers or {}), "Content-Type": "application/json"}
         try:
             status, resp_body = _http_bytes(
                 "POST", f"{base_url}/v1/knowledge/query", headers, payload, 120.0
@@ -502,6 +512,13 @@ class Pipe:
 
         auth_headers = {"Authorization": f"Bearer {token}"}
 
+        # K21: поиск - от имени текущего пользователя (разграничение доступа).
+        # Админ WebUI идёт владельческим токеном без act-as и видит всю базу
+        # (включая личное по умолчанию); остальные - личность act-as: общие
+        # группы + своя личная, чужое личное не находится.
+        role = str((__user__ or {}).get("role") or "").strip().lower()
+        ask_on_behalf = {"X-Veles-On-Behalf-Of": email} if role != "admin" else None
+
         report: list[str] = []
         pending = 0  # файлы, обработка которых не успела дойти до конца
         if files:
@@ -536,7 +553,7 @@ class Pipe:
             self._emit(__event_emitter__, "Поиск по базе знаний")
             blocks.append(self._ask(question, auth_headers=auth_headers,
                                     base_url=base_url, public_url=public_url,
-                                    token=token))
+                                    token=token, on_behalf_headers=ask_on_behalf))
             if pending:
                 blocks.append(
                     "Примечание: только что загруженные файлы ещё обрабатываются, "

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -34,6 +35,12 @@ def is_lost_force(text: str) -> bool:
     """True, если текст узла содержит признак утраты силы нормы."""
     t = " ".join((text or "").split()).lower().replace("ё", "е")
     return any(rx.search(t) for rx in _LOST_FORCE_RES)
+
+
+# K21: узел меты мутируется воркером очереди (upsert расширяет dict) и
+# итерируется читателями (stats, _resolve_revision) - без лока возможен редкий
+# RuntimeError: dictionary changed size during iteration. Ревизия P2 ревью 01.10.
+INDEX_LOCK = threading.RLock()
 
 
 @dataclass

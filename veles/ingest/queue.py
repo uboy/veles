@@ -40,7 +40,7 @@ import numpy as np
 from ..canonical.model import CanonicalDocument
 from ..canonical.store import ingest_document
 from ..config import DEFAULT_ACCESS_GROUPS
-from ..indexing.indexer import is_lost_force
+from ..indexing.indexer import INDEX_LOCK, is_lost_force
 from ..policy.identifiers import extract_identifiers
 
 logger = logging.getLogger("veles.ingest.queue")
@@ -317,6 +317,8 @@ def upsert_document(bundle, doc: CanonicalDocument, outcome, embedder) -> Upsert
 
     patches: dict = {}
     if outcome.previous_revision:
+        # K21: только присваивания значений - размер node_meta не меняется,
+        # итерация безопасна для читателей и без лока
         for nid, meta in bundle.node_meta.items():
             if (
                 meta.get("document_id") == doc.document_id
@@ -356,12 +358,17 @@ def upsert_document(bundle, doc: CanonicalDocument, outcome, embedder) -> Upsert
 
     ids = list(new_meta)
     matrix = embedder.embed_passages(texts) if texts else np.zeros((0, 1), dtype=np.float32)
-    # 1) мета: dict.update - одна атомарная операция; 2) векторы; 3) BM25
-    bundle.node_meta.update(new_meta)
-    bundle.identifiers |= identifiers
-    if ids:
-        bundle.vector.add(ids, matrix)
-        bundle.bm25.add(ids, texts)
+    # K21: расширение node_meta под INDEX_LOCK - читатели-итераторы (stats,
+    # _resolve_revision) снимают снапшот под тем же локом, RuntimeError
+    # «dictionary changed size» исключён; поиск между шагами видит старое
+    # или целое новое (см. докстринг выше)
+    with INDEX_LOCK:
+        # 1) мета: dict.update - одна атомарная операция; 2) векторы; 3) BM25
+        bundle.node_meta.update(new_meta)
+        bundle.identifiers |= identifiers
+        if ids:
+            bundle.vector.add(ids, matrix)
+            bundle.bm25.add(ids, texts)
     return UpsertDelta(
         nodes=new_meta, patches=patches, ids=ids, matrix=matrix,
         bm25=[(nid, text) for nid, text in zip(ids, texts)],

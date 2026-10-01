@@ -46,6 +46,12 @@ if not files:
     raise SystemExit(f"нет .md документов в {docs_dir}")
 for path in files:
     doc = parser.parse_file(path, corpus_root=docs_dir)
+    # K21: демо-контент - общий (группа all), а не личный по умолчанию
+    # (DEFAULT_ACCESS_GROUPS=personal): иначе новый пользователь без группы
+    # personal видит в чате «пустую базу» - ловушка демо
+    doc.access_groups = ["all"]
+    for node in doc.nodes:
+        node.access_groups = ["all"]
     outcome = ingest_document(doc, by="demo-build")
     print(f"  {doc.document_id}: {len(doc.nodes)} узлов ({outcome.action}, {outcome.revision_id})")
 

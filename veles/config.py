@@ -96,3 +96,20 @@ VELES_RERANKER_MAX_LENGTH = _env_int("VELES_RERANKER_MAX_LENGTH", 0)
 VELES_RERANKER_BATCH = _env_int("VELES_RERANKER_BATCH", 0)
 # Глубина пула кандидатов под rerank (узлов после RRF/буста; бриф K17 - 25).
 RERANK_CANDIDATES = 25
+
+
+def _env_float(name: str, default: float) -> float:
+    """float из env без роняния импорта (та же дисциплина, что _env_int)."""
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        print(f"config: {name}={raw!r} не число - беру {default}", flush=True)
+        return default
+
+
+# Таймаут ожидания синтеза LLM, с (K21): при медленном/деградирующем LLM-хосте
+# фолбэк на extractive-ответ наступает раньше, чем клиент отвалится по таймауту.
+VELES_LLM_TIMEOUT_S = _env_float("VELES_LLM_TIMEOUT_S", 60.0)

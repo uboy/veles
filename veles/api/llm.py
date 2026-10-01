@@ -10,6 +10,9 @@ OpenAI-совместимый эндпоинт = любой провайдер (
 
 Локальный профиль по KB-исследованию Дениса (gemma4-hermes-tools): Hermes tool-calling
 модели через Ollama/llama.cpp - тот же OpenAI-совместимый контракт.
+
+VELES_LLM_TIMEOUT_S - таймаут синтеза в секундах (дефолт 60, K21): при деградации
+LLM-хоста ответ деградирует к extractive-фолбэку, не дожидаясь клиентского таймаута.
 """
 
 from __future__ import annotations
@@ -38,10 +41,15 @@ class LLMConfig(BaseModel):
 
 
 def llm_config_from_env() -> LLMConfig:
+    # таймаут читается на вызов через атрибут config (тот же приём, что у
+    # реранкера) - тесты подменяют атрибут без переимпорта модуля
+    from .. import config
+
     return LLMConfig(
         base_url=os.environ.get("VELES_LLM_BASE_URL", ""),
         model=os.environ.get("VELES_LLM_MODEL", ""),
         api_key=os.environ.get("VELES_LLM_API_KEY", ""),
+        timeout_s=config.VELES_LLM_TIMEOUT_S,
     )
 
 

@@ -247,11 +247,22 @@ def test_question_only_answer_with_citations(pipe) -> None:
     call = http.calls[0]
     assert call["url"] == "http://veles:8400/v1/knowledge/query"
     assert call["headers"]["authorization"] == "Bearer owner-token"
-    # запрос к базе - НЕ act-as: вопрос не персональный документ
-    assert "x-veles-on-behalf-of" not in call["headers"]
+    # K21: поиск - от имени пользователя (разграничение доступа): не-админ WebUI
+    # шлёт act-as, фасад срезает выдачу до его личности
+    assert call["headers"]["x-veles-on-behalf-of"] == "ivanov@corp.ru"
     payload = json.loads(call["data"].decode("utf-8"))
     assert payload["query"] == "Сколько дней ежегодный отпуск?"
     assert payload["use_llm"] is True
+
+
+def test_question_admin_no_act_as(pipe) -> None:
+    """K21: админ WebUI ходит владельческим токеном без act-as - видит всю базу
+    (в т.ч. личное по умолчанию), его путь не менялся."""
+    http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
+    admin = {"email": "<owner-email>", "name": "Владелец", "role": "admin"}
+    pipe(http).pipe(BODY_QUESTION, admin)
+    call = http.calls[0]
+    assert "x-veles-on-behalf-of" not in call["headers"]
 
 
 def test_question_abstain_honest(pipe) -> None:
