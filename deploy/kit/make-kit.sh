@@ -59,7 +59,7 @@ if find "$PKG_DIR" \( -name '.env' -o -name '*.env' -o -name 'secrets*' \) | gre
 fi
 # content-скан: ключи и внутренняя инфраструктура не должны уехать заказчику
 # (паттерны разорваны классами [c], чтобы не совпадать с собственным текстом)
-LEAKS=$(grep -rIlE 'sk-[a-zA-Z0-9]{16,}|BEGIN [A-Z ]*PRIVATE KEY|vps-ae[z]a|d3v1-se\.duck[d]ns|10[.]13[.]105[.]' "$PKG_DIR" 2>/dev/null || true)
+LEAKS=$(grep -rIlE 'sk-[a-zA-Z0-9]{16,}|BEGIN [A-Z ]*PRIVATE KEY|[0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}[.][0-9]{1,3}|[a-z0-9-]+[.]duckdns[.]org|vps-[a-z0-9]+' "$PKG_DIR" 2>/dev/null || true)
 if [ -n "$LEAKS" ]; then
     echo "content-скан нашёл кандидатов в секреты/внутреннюю инфру - сборка прервана:" >&2
     echo "$LEAKS" >&2

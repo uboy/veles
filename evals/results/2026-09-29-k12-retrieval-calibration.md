@@ -46,8 +46,8 @@ k11-045 (auto, d=3/b=4 -> r=10), k11-040 (auto, d=1/b=2 -> r=6), k11-049
 
 ## Золотой набор: до/после (прод-данные стенд, live; ПОСЛЕ подтверждено кэшем)
 
-Params ДО: rrf_k=60, w=(1,1), depth=25, codex_boost=0, dedupe=off, junk=off.
-Params ПОСЛЕ: то же, **codex_boost=2.0** (новый дефолт config).
+Params ДО: rrf_k=60, w=(1,1), depth=25, legal_boost=0, dedupe=off, junk=off.
+Params ПОСЛЕ: то же, **legal_boost=2.0** (новый дефолт config).
 
 **Итого / provenance**
 
@@ -85,8 +85,8 @@ Params ПОСЛЕ: то же, **codex_boost=2.0** (новый дефолт confi
 |---|---|---|---|---|---|---|
 | ДО (дефолты старые) | 0.983 | 0.684 | 0.814 | 0.625 | 0.0 | - |
 | A: dedupe | 1.000 | 0.772 | 0.877 | 0.670 | 1.0 | отклонён как дефолт (см. rrncb50) |
-| B: codex_boost 1.0 | 1.000 | 0.684 | 0.819 | 0.635 | 0.25 | эквивалентен 2.0 |
-| B2: codex_boost 2.0 | 1.000 | 0.684 | 0.819 | 0.635 | 0.25 | **ПРИНЯТ** (запас к дубль-раздуванию) |
+| B: legal_boost 1.0 | 1.000 | 0.684 | 0.819 | 0.635 | 0.25 | эквивалентен 2.0 |
+| B2: legal_boost 2.0 | 1.000 | 0.684 | 0.819 | 0.635 | 0.25 | **ПРИНЯТ** (запас к дубль-раздуванию) |
 | C: filter_junk | 0.983 | 0.684 | 0.814 | 0.625 | 0.0 | без эффекта на depth 25 - не принят |
 | AC: dedupe+junk | 1.000 | 0.772 | 0.877 | 0.670 | 1.0 | как A |
 | ABC: dedupe+boost2+junk | 1.000 | 0.772 | 0.877 | 0.674 | 1.0 | отклонён (rrncb50) |
@@ -103,12 +103,12 @@ RRNCB-50 под A/AC/ABC: **R@5 0.960 (-0.04, цель была не хуже -0
 
 ## Принято
 
-- `veles/config.py`: **CODEX_BOOST = 2.0** (был 0.0). Единственная
+- `veles/config.py`: **LEGAL_BOOST = 2.0** (был 0.0). Единственная
   комбинация, выполнившая все цели: k11-056 в top-5 (ранг 4), R@5 golden
   1.000 >= 0.983, P@5 0.635 >= 0.625, RRNCB-50 ±0.000. Регрессий по разбивкам
   нет (manual 0.667 -> 1.0, кодексы R@5 0.95 -> 1.0, P@5 0.79 -> 0.82).
 - `veles/retrieval/retriever.py`: калибровочная поверхность - channel_weights,
-  candidate_depth, codex_boost, filter_junk (is_junk_node), dedupe_channels
+  candidate_depth, legal_boost, filter_junk (is_junk_node), dedupe_channels
   (dedupe_pairs). Все параметры опциональны, None = дефолт config.
 - `evals/synth-bench/retrieval_bench.py` (бенч + live-режим с флагами),
   `retrieval_diag.py` (диагностика каналов/рангов), `rrncb_sample.py`
@@ -196,12 +196,12 @@ k11-056 (19 узлов = 7 текстов x 2 копии парсинга + ст
 # bench ДО/ПОСЛЕ (live, read-only):
 VELES_REPO=$HOME/proj/veles-bench/veles-k12 VELES_DATA=$HOME/proj/veles-bench/veles/data \
 CUDA_VISIBLE_DEVICES= PYTHONUNBUFFERED=1 ~/veles-venv/bin/python retrieval_bench.py --live
-# сетка кандидатов: те же + --dedupe / --codex-boost 2.0 / --filter-junk / --w-dense 2 ...
+# сетка кандидатов: те же + --dedupe / --legal-boost 2.0 / --filter-junk / --w-dense 2 ...
 # диагностика:
 ... retrieval_diag.py --qids k11-056 --depth 400
 # RRNCB-50:
 ... rrncb_sample.py --csv ~/proj/veles-bench/rrncb/rrncb_public_dataset.csv --out rrncb50.jsonl
-... retrieval_bench.py --golden rrncb50.jsonl --live [--codex-boost 2.0 ...]
+... retrieval_bench.py --golden rrncb50.jsonl --live [--legal-boost 2.0 ...]
 # перезаморозка:
 ... freeze_retrieval.py --golden golden.jsonl --out retrieval-cache.json
 ```

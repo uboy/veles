@@ -32,7 +32,7 @@ from ..indexing.embedder import SentenceTransformersProvider
 from ..indexing.indexer import INDEX_LOCK, IndexBundle, load_index
 from ..policy.answer import decide
 from ..policy.groups import GROUP_ALL, membership_of
-from ..policy.identifiers import extract_codex_refs, extract_identifiers
+from ..policy.identifiers import extract_legal_refs, extract_identifiers
 from ..policy.identity import (
     IdentityResolver,
     JwtHeaderResolver,
@@ -172,7 +172,7 @@ class VelesPipeline:
             evidence,
             query_identifiers=extract_identifiers(query),
             known_identifiers=self.bundle.identifiers,
-            codex_refs=extract_codex_refs(query),
+            legal_refs=extract_legal_refs(query),
             doc_titles=self.doc_titles,
         )
         citations, evidence_texts = [], []
@@ -274,7 +274,7 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
         for c in result.get("citations", [])
         if c.get("document_id") and c.get("node_version_id")
     }
-    # ревью владельца 29.09 (демо сервер): текст ссылки = человекочитаемое
+    # ревью 29.09: текст ссылки = человекочитаемое
     # название документа, а не голый [n] - иначе непонятно, куда ведёт ссылка
     titles = {
         c["n"]: (c.get("title") or c.get("document_id") or f"источник {c['n']}")[:80]

@@ -47,7 +47,7 @@ def main() -> int:
     ap.add_argument("--rrf-k", type=int, default=None)
     ap.add_argument("--w-dense", type=float, default=1.0)
     ap.add_argument("--w-lex", type=float, default=1.0)
-    ap.add_argument("--codex-boost", type=float, default=None)
+    ap.add_argument("--legal-boost", type=float, default=None)
     ap.add_argument("--filter-junk", action="store_true")
     ap.add_argument("--dedupe", action="store_true")
     args = ap.parse_args()
@@ -59,7 +59,7 @@ def main() -> int:
     from veles.retrieval.retriever import is_junk_node
 
     rrf_k = args.rrf_k if args.rrf_k is not None else RRF_K
-    codex_boost = args.codex_boost or 0.0
+    legal_boost = args.legal_boost or 0.0
 
     print(f"live: индекс {INDEX_DIR} (read-only), модель {EMBED_MODEL}", flush=True)
     embedder = SentenceTransformersProvider(EMBED_MODEL, dim=EMBED_DIM)
@@ -98,18 +98,18 @@ def main() -> int:
 
     def rrf_of(dense, lex, entry):
         """RRF c бустом/фильтром (та же семантика, что hybrid_search) -> список id."""
-        from veles.policy.identifiers import _CODEX_MAP, extract_codex_refs
+        from veles.policy.identifiers import _LEGAL_CODES_MAP, extract_legal_refs
 
         score: dict[str, float] = {}
         for rank, (nid, _) in enumerate(dense, start=1):
             score[nid] = score.get(nid, 0.0) + args.w_dense / (rrf_k + rank)
         for rank, (nid, _) in enumerate(lex, start=1):
             score[nid] = score.get(nid, 0.0) + args.w_lex / (rrf_k + rank)
-        if codex_boost > 0.0:
-            refs = extract_codex_refs(entry["question"])
+        if legal_boost > 0.0:
+            refs = extract_legal_refs(entry["question"])
             if refs:
-                bonus = codex_boost / (rrf_k + 1.0)
-                needles = [_CODEX_MAP[r] for r in refs]
+                bonus = legal_boost / (rrf_k + 1.0)
+                needles = [_LEGAL_CODES_MAP[r] for r in refs]
                 for nid in score:
                     meta = bundle.node_meta.get(nid) or {}
                     title = " ".join(str(meta.get("title", "")).lower().replace("ё", "е").split())

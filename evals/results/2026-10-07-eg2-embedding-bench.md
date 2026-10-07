@@ -8,7 +8,7 @@ intfloat/multilingual-e5-small (33М) в гибридном поиске veles.
 
 Тот же протокол, что K17-базлайн: in-process live-retrieval против собранного
 индекса, наборы golden-k14 (57 answerable) и rrncb50-k14 (50), top_k=5,
-дефолтные каналы (rrf_k=None, w=(1.0,1.0), codex_boost=None, filter_junk=False,
+дефолтные каналы (rrf_k=None, w=(1.0,1.0), legal_boost=None, filter_junk=False,
 dedupe=False) - дословно как в базлайне (строка args в логе базлайна).
 
 - Хост стенд, ~/proj/veles-eg2 (worktree), ~/eg2-venv (transformers 5.18+,

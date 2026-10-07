@@ -89,7 +89,7 @@ k11-056 «транспортный налог»: expected ст. 357 - ТОП-1 (
 COV 2.00 - лучший результат на трёх снапшотах; FAITH -0.04, CITE -0.02 -
 в пределах разброса одного судьи.
 
-## codex-boost-check (2 answerable + 4 abstain, синтез по замороженным фрагментам)
+## кодекс-буст-check (2 answerable + 4 abstain, синтез по замороженным фрагментам)
 
 6/6 верно: cbc-001 «транспортный налог» - ответ со ст. 357 (цитаты верхнего
 ранга); cbc-002 «соосность блоков» - «отвес» [4],[5]; cbc-003..006 (суши-рис,
@@ -101,7 +101,7 @@ COV 2.00 - лучший результат на трёх снапшотах; FAI
 при ст. 357 в цитате N1. Замер `gate_abstain_report.py` (decide() с продовыми
 дефолтами, оба индекса, read-only):
 
-| Индекс | false-abstain на 57 answerable | codex-boost-check гейт |
+| Индекс | false-abstain на 57 answerable | кодекс-буст-check гейт |
 |---|---|---|
 | dup (бэкап) | 1/57 (1.8%) - k11-026 | 3/6 (ошибки: 2 false-answer) |
 | чистый (прод) | **2/57 (3.5%) - k11-026, k11-056** | 3/6 (ошибки: 2 false-abstain) |
@@ -112,7 +112,7 @@ COV 2.00 - лучший результат на трёх снапшотах; FAI
 канала = 1/61, factor 0.8 -> conf=0.4 < ABSTAIN_CONFIDENCE 0.55 -> abstain.
 Дополнительный фактор: фасад до рестарта крутил код c1410bb (до K12), после -
 972b131; наблюдаемое поведение = новый код + чистый индекс (раньше сочетание
-не существовало). codex_boost не помогает confidence по построению (rrf_base до
+не существовало). legal_boost не помогает confidence по построению (rrf_base до
 буста, фикс ревью K12 P1). Заметим: гейт оба индекса пропускает cbc-006 (ПДД,
 conf 1.0) - FAR-кейс не нов.
 
@@ -177,7 +177,7 @@ VELES_REPO=$HOME/proj/veles-bench/veles CUDA_VISIBLE_DEVICES= PYTHONUNBUFFERED=1
 VELES_REPO=... ~/veles-venv/bin/python retrieval_bench.py --golden rrncb50-k14.jsonl --live
 # перезаморозка кэша (выполнена, committed):
 ... freeze_retrieval.py --golden golden.jsonl --out retrieval-cache.json
-# synth: e2e/run_synth_bench.py --provider glm --secrets-file ~/secrets/veles-facade.env \
+# synth: e2e/run_synth_bench.py --provider glm --secrets-file <secrets-dir>/veles-facade.env \
 #   --golden golden.jsonl --retrieval-cache retrieval-cache.json --out answers-glm-k14.json
 # judge: judge.py --answers answers-glm-k14.json --golden golden.jsonl \
 #   --retrieval-cache retrieval-cache.json --out judged-k14.json --md table-k14.md
@@ -188,7 +188,7 @@ VELES_REPO=... ~/veles-venv/bin/python retrieval_bench.py --golden rrncb50-k14.j
 
 Артефакты: evals/synth-bench/{golden-k14.jsonl, rrncb50-k14.jsonl,
 retrieval-cache.json (567 КБ, перезаморожен), retrieval-cache-cbc.json,
-codex-boost-check-id.jsonl, answers-glm-k14.json, answers-cbc-k14.json,
+legal-boost-check-id.jsonl, answers-glm-k14.json, answers-cbc-k14.json,
 judged-k14.json, table-k14.md, remap_golden_expected.py,
 gate_abstain_report.py}; стенд: /tmp/k14/{bench-*.json, gate-old-new.json,
 audit-after.json, build.log}, лог операции ~/veles-rebuild-dedupe.log.

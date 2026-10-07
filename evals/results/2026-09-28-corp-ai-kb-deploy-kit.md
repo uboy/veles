@@ -5,7 +5,7 @@
 docker compose v2.5.0). Архив финальной версии: `veles-deploy-kit-bd19c86.tar.gz`
 (= git HEAD на момент окончания работ); полный цикл install → CLI → verify → uninstall
 переигран именно на нём. E2E проводился в `/tmp/veles-kit-e2e.*` на стенд; прод-стек стенд
-(порты 8300/8400/8500, юниты veles-*, `~/proj/veles-bench`, `~/secrets`) не затронут -
+(порты 8300/8400/8500, юниты veles-*, `~/proj/veles-bench`, `<secrets-dir>`) не затронут -
 lite-профиль портов не слушает, venv стенд использован только как интерпретатор для
 pytest, pip install - только в tmp-venv из /tmp.
 
@@ -20,7 +20,7 @@ bash deploy/kit/make-kit.sh
 Вывод:
 
 ```
-архив: /c/Users/devl/proj/veles-wt-deploy/scratch/veles-deploy-kit-1f81e95.tar.gz
+архив: /c/Users/<local-pc>/proj/veles-wt-deploy/scratch/veles-deploy-kit-1f81e95.tar.gz
   версия: 1f81e95
   файлов: 108
 ```
@@ -133,7 +133,7 @@ PARSE OK: <local-pc>\proj\veles-wt-deploy\deploy\kit\windows\uninstall.ps1
 Команда (корень репо, Git Bash; исключены docs/, deploy/стенд/, scratch/, .git/):
 
 ```
-grep -rn "C:\\Users\\devl\|<server-home>\|10\.13\.105\.101" . \
+grep -rn "C:\\Users\\<local-pc>\|<server-home>\|10\.13\.105\.101" . \
   --exclude-dir=.git --exclude-dir=scratch --exclude-dir=docs --exclude-dir=стенд \
   | grep -v "^Binary"
 ```

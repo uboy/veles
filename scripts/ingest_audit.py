@@ -340,7 +340,7 @@ def scan_cross_doc_duplicates(root: Path, root_name: str, state: dict) -> None:
 
 # ------------------------------------------------------------------ кодексы
 
-def audit_codex(d: Path) -> dict | None:
+def audit_legal_refs(d: Path) -> dict | None:
     """Специфика кодекса для одного каталога документа; None - не кодекс."""
     try:
         manifest = json.loads((d / "manifest.json").read_text(encoding="utf-8"))
@@ -490,7 +490,7 @@ def run_audit(args: argparse.Namespace) -> dict:
         for root in roots:
             for d, has_manifest, has_nodes in iter_doc_dirs(root):
                 if has_manifest and has_nodes:
-                    rep = audit_codex(d)
+                    rep = audit_legal_refs(d)
                     if rep:
                         codes.append(rep)
 

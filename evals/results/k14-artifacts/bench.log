@@ -1,6 +1,6 @@
-2026-09-29T21:42:53+03:00 bench golden live START (дефолты config: codex_boost=2.0, depth=25, dedupe=False)
+2026-09-29T21:42:53+03:00 bench golden live START (дефолты config: legal_boost=2.0, depth=25, dedupe=False)
 
-# retrieval-bench [live] (rrf_k=None, w=(1.0,1.0), depth=None, codex_boost=None, filter_junk=False, dedupe=False)
+# retrieval-bench [live] (rrf_k=None, w=(1.0,1.0), depth=None, legal_boost=None, filter_junk=False, dedupe=False)
 golden: 72 вопросов, answerable 57
 **Итого**
 

@@ -22,7 +22,7 @@
 Запуск live (стенд):
   VELES_REPO=$HOME/proj/veles-bench/veles CUDA_VISIBLE_DEVICES= PYTHONUNBUFFERED=1 \
   ~/veles-venv/bin/python retrieval_bench.py --golden golden.jsonl --live \
-      --codex-boost 2.0 --depth 200 --filter-junk
+      --legal-boost 2.0 --depth 200 --filter-junk
 """
 
 from __future__ import annotations
@@ -155,7 +155,7 @@ def run_live(golden: list[dict], args) -> dict[str, list[dict]]:
             rrf_k=args.rrf_k,
             channel_weights=(args.w_dense, args.w_lex),
             candidate_depth=args.depth,
-            codex_boost=args.codex_boost,
+            legal_boost=args.legal_boost,
             filter_junk=args.filter_junk,
             dedupe_channels=args.dedupe,
         )
@@ -198,7 +198,7 @@ def main() -> int:
     ap.add_argument("--w-dense", type=float, default=1.0)
     ap.add_argument("--w-lex", type=float, default=1.0)
     ap.add_argument("--depth", type=int, default=None, help="глубина каналов (дефолт top_k*5)")
-    ap.add_argument("--codex-boost", type=float, default=None)
+    ap.add_argument("--legal-boost", type=float, default=None)
     ap.add_argument("--filter-junk", action="store_true")
     ap.add_argument("--dedupe", action="store_true",
                     help="снимать дубликаты узла внутри каналов (дефект индекса)")
@@ -231,7 +231,7 @@ def main() -> int:
     if args.live:
         params = (
             f" (rrf_k={args.rrf_k}, w=({args.w_dense},{args.w_lex}), depth={args.depth}, "
-            f"codex_boost={args.codex_boost}, filter_junk={args.filter_junk}, "
+            f"legal_boost={args.legal_boost}, filter_junk={args.filter_junk}, "
             f"dedupe={args.dedupe})"
         )
     print(f"\n# retrieval-bench [{label}]{params}")

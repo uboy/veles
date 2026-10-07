@@ -161,7 +161,7 @@ def main() -> int:
         from veles.canonical.store import iter_documents
 
         for doc in iter_documents(root=DOCLING_ROOT):
-            # стенд-канон строился с корнем на уровень выше: нормализуем к имени файла
+            # канон строился с корнем на уровень выше: нормализуем к имени файла
             doc.document_id = Path(doc.document_id).name
             docling_docs[doc.document_id] = doc
         missing = set(docs) - set(docling_docs)

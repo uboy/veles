@@ -70,32 +70,32 @@ _NODES_BOOST = {
 _Q_BOOST = "Кто является плательщиком налога согласно НК РФ?"
 
 
-def test_codex_boost_lifts_named_codex_document() -> None:
+def test_legal_boost_lifts_named_codex_document() -> None:
     """Буст поднимает узлы НК РФ над равным по каналам узлом ГК РФ
     (позитив: кейс «согласно НК РФ» меняет порядок в пользу названного акта)."""
     bundle = _bundle(_NODES_BOOST)
-    base = hybrid_search(bundle, _qvec(), _Q_BOOST, top_k=2, codex_boost=0.0)
+    base = hybrid_search(bundle, _qvec(), _Q_BOOST, top_k=2, legal_boost=0.0)
     assert [e.node_version_id for e in base] == ["nk1", "gk1"]  # ties: dense первым
-    boosted = hybrid_search(bundle, _qvec(), _Q_BOOST, top_k=2, codex_boost=2.0)
+    boosted = hybrid_search(bundle, _qvec(), _Q_BOOST, top_k=2, legal_boost=2.0)
     assert [e.node_version_id for e in boosted][0] == "nk1"
     assert boosted[0].rrf > base[0].rrf  # бонус вошёл в скор
-    # бонус = codex_boost/(rrf_k+1) поверх равного вклада каналов
+    # бонус = legal_boost/(rrf_k+1) поверх равного вклада каналов
     assert boosted[0].rrf == pytest.approx(
         base[0].rrf + 2.0 / (RRF_K + 1.0)
     )
 
 
-def test_codex_boost_noop_without_codex_mention() -> None:
+def test_legal_boost_noop_without_codex_mention() -> None:
     """Негатив: вопрос не называет кодекс - буст не меняет ни порядок, ни скоры."""
     bundle = _bundle(_NODES_BOOST)
     q = "Кто является плательщиком налога?"
-    plain = hybrid_search(bundle, _qvec(), q, top_k=2, codex_boost=0.0)
-    boosted = hybrid_search(bundle, _qvec(), q, top_k=2, codex_boost=2.0)
+    plain = hybrid_search(bundle, _qvec(), q, top_k=2, legal_boost=0.0)
+    boosted = hybrid_search(bundle, _qvec(), q, top_k=2, legal_boost=2.0)
     assert [e.node_version_id for e in plain] == [e.node_version_id for e in boosted]
     assert [e.rrf for e in plain] == [e.rrf for e in boosted]
 
 
-def test_codex_boost_confidence_uses_base_score() -> None:
+def test_legal_boost_confidence_uses_base_score() -> None:
     """Ревью K12 P1: бонус равен потолку нормировки confidence - по финальному rrf
     забушенный узел на ЛЮБОМ ранге давал бы 1.0 и отключал abstain-гейт для
     «согласно НК РФ». confidence обязан считаться по органическому rrf_base:

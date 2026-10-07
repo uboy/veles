@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """K14: квантификация abstain-гейта AnswerPolicy на старом (dup) и новом
 (чистом) индексах. Решения decide() с продовыми дефолтами по 57 answerable
-golden + 6 codex-boost-check. Read-only, load_index без save."""
+golden + 6 кодекс-буст-check. Read-only, load_index без save."""
 import json
 import sys
 from pathlib import Path
@@ -13,13 +13,13 @@ from veles.config import EMBED_DIM, EMBED_MODEL  # noqa: E402
 from veles.indexing.embedder import SentenceTransformersProvider  # noqa: E402
 from veles.indexing.indexer import load_index  # noqa: E402
 from veles.policy.answer import decide  # noqa: E402
-from veles.policy.identifiers import extract_codex_refs, extract_identifiers  # noqa: E402
+from veles.policy.identifiers import extract_legal_refs, extract_identifiers  # noqa: E402
 from veles.retrieval.retriever import hybrid_search  # noqa: E402
 
 SB = REPO / "evals" / "synth-bench"
 golden = [json.loads(l) for l in open(SB / "golden.jsonl", encoding="utf-8")]
 answerable = [e for e in golden if not e.get("abstain")]
-cbc = [json.loads(l) for l in open(SB / "codex-boost-check-id.jsonl", encoding="utf-8")]
+cbc = [json.loads(l) for l in open(SB / "legal-boost-check-id.jsonl", encoding="utf-8")]
 
 embedder = SentenceTransformersProvider(EMBED_MODEL, dim=EMBED_DIM)
 
@@ -32,7 +32,7 @@ def measure(index_dir: Path) -> dict:
         ev = hybrid_search(bundle, embedder.embed_query(q), q, top_k=5)
         d = decide(ev, query_identifiers=extract_identifiers(q),
                    known_identifiers=bundle.identifiers,
-                   codex_refs=extract_codex_refs(q), doc_titles=doc_titles)
+                   legal_refs=extract_legal_refs(q), doc_titles=doc_titles)
         out["golden_abstain"].append(
             {"id": e["id"], "decision": d.decision, "conf": d.confidence})
     for e in cbc:
@@ -40,7 +40,7 @@ def measure(index_dir: Path) -> dict:
         ev = hybrid_search(bundle, embedder.embed_query(q), q, top_k=5)
         d = decide(ev, query_identifiers=extract_identifiers(q),
                    known_identifiers=bundle.identifiers,
-                   codex_refs=extract_codex_refs(q), doc_titles=doc_titles)
+                   legal_refs=extract_legal_refs(q), doc_titles=doc_titles)
         out["cbc"].append(
             {"id": e["id"], "abstain_expected": bool(e.get("abstain")),
              "decision": d.decision, "conf": d.confidence})

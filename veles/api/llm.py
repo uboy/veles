@@ -8,7 +8,7 @@ OpenAI-совместимый эндпоинт = любой провайдер (
 Если base_url/model не заданы - провайдер выключен, фасад отвечает извлечённым
 фрагментом (graceful degradation, АПИ не падает).
 
-Локальный профиль по KB-исследованию Дениса (gemma4-hermes-tools): Hermes tool-calling
+Локальный профиль по KB-исследованию (gemma4-hermes-tools): Hermes tool-calling
 модели через Ollama/llama.cpp - тот же OpenAI-совместимый контракт.
 
 VELES_LLM_TIMEOUT_S - таймаут синтеза в секундах (дефолт 60, K21): при деградации

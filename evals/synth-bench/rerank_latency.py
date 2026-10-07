@@ -74,7 +74,7 @@ def load_questions() -> list[str]:
     for name in (
         "evals/synth-bench/golden.jsonl",
         "evals/synth-bench/rrncb50.jsonl",
-        "evals/synth-bench/codex-boost-check.jsonl",
+        "evals/synth-bench/legal-boost-check.jsonl",
     ):
         with open(ROOT / name, encoding="utf-8") as f:
             qs.extend(json.loads(line)["question"] for line in f if line.strip())

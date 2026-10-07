@@ -14,7 +14,7 @@
 
 - стенд: ssh BatchMode OK; прод-данные `~/proj/veles-bench/veles/data` (137 доков,
   158 394 узла, numpy-индекс); венд `~/veles-venv` (torch 2.14.0+cu130,
-  sentence-transformers). Ключ синтеза — `~/secrets/veles-facade.env`,
+  sentence-transformers). Ключ синтеза — `<secrets-dir>/veles-facade.env`,
   `VELES_LLM_BASE_URL=https://api.z.ai/api/coding/paas/v4`, модель `glm-5.3-flash`
   (тот же env, что у прода).
 - **V100: `http://<internal-llm-host>:8471/v1` ДОСТИЖИМА с стенд напрямую**
@@ -36,7 +36,7 @@
 # 1. golden-набор: RRNCB QA + мини-QA + GLM-генерация с самопроверкой + abstain
 VELES_REPO=$HOME/proj/veles-bench/veles CUDA_VISIBLE_DEVICES= PYTHONUNBUFFERED=1 \
 ~/veles-venv/bin/python evals/synth-bench/build_golden.py \
-  --secrets-file ~/secrets/veles-facade.env \
+  --secrets-file <secrets-dir>/veles-facade.env \
   --rrncb-csv ~/proj/veles-bench/rrncb/rrncb_public_dataset.csv \
   --miniqa bench/miniqa-vyshka-module1-v1.json --out golden.jsonl
 # -> 72 вопроса (57 answerable + 15 abstain = 21%); GLM-генерация:
@@ -135,7 +135,7 @@ thinking-канал (`reasoning_content` у GLM и gemma) ответом не с
 - Кэш retrieval 549 КБ < 1 МБ — закоммичен в `evals/synth-bench/` (обоснование:
   фиксирует замороженные фрагменты, на которых воспроизводимы все ответы; снапшот
   в отчёте не нужен, т.к. сам файл в git). Секреты в репозиторий не попадали
-  (ключи читались из `~/secrets/veles-facade.env` на стенд).
+  (ключи читались из `<secrets-dir>/veles-facade.env` на стенд).
 
 ## Не проверено (MANUAL — для владельца)
 

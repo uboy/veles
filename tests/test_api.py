@@ -1,4 +1,4 @@
-"""Тесты Ф4: фасад (канонический + OpenAI-совместимый), codex-сигнал, деградация LLM.
+"""Тесты Ф4: фасад (канонический + OpenAI-совместимый), кодекс-сигнал, деградация LLM.
 
 Без реальных моделей: фейковый эмбеддер + ручной IndexBundle (как в test_slice).
 """
@@ -143,7 +143,7 @@ def test_auth_token_required():
 
 def test_decide_codex_miss_in_policy():
     ev = Evidence("n1", "t", 0.03, 1, 1, [Citation("t", "d", [], "s", None, "n1")])
-    d = decide([ev], codex_refs=["нк рф"], doc_titles={"Гражданский кодекс.pdf"})
+    d = decide([ev], legal_refs=["нк рф"], doc_titles={"Гражданский кодекс.pdf"})
     assert d.decision == "abstain"
-    d2 = decide([ev], codex_refs=["нк рф"], doc_titles={"Налоговый кодекс Российской Федерации.pdf"})
+    d2 = decide([ev], legal_refs=["нк рф"], doc_titles={"Налоговый кодекс Российской Федерации.pdf"})
     assert d2.decision == "answer"

@@ -260,7 +260,7 @@ def test_question_admin_no_act_as(pipe) -> None:
     """K21: админ WebUI ходит владельческим токеном без act-as - видит всю базу
     (в т.ч. личное по умолчанию), его путь не менялся."""
     http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
-    admin = {"email": "<owner-email>", "name": "Владелец", "role": "admin"}
+    admin = {"email": "boss@corp.ru", "name": "Администратор", "role": "admin"}
     pipe(http).pipe(BODY_QUESTION, admin)
     call = http.calls[0]
     assert "x-veles-on-behalf-of" not in call["headers"]
@@ -272,10 +272,10 @@ def test_source_link_map_rewrites_to_web_version(pipe) -> None:
     http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
     p = pipe(http)
     p.valves.source_link_map = json.dumps(
-        {"Регламент": "https://gitee.com/<gitee-user>/open-harmony/wikis/"})
+        {"Регламент": "https://wiki.example.org/"})
     out = p.pipe(BODY_QUESTION, USER)
     slug = quote("Регламент-отпусков", safe="-._~()")
-    web = "https://gitee.com/<gitee-user>/open-harmony/wikis/" + slug
+    web = "https://wiki.example.org/" + slug
     assert web in out
     assert "/v1/source/" not in out
 
@@ -285,7 +285,7 @@ def test_source_link_map_no_match_keeps_local(pipe) -> None:
     http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
     p = pipe(http)
     p.valves.source_link_map = json.dumps(
-        {"open-harmony": "https://gitee.com/<gitee-user>/open-harmony/wikis/"})
+        {"open-harmony": "https://wiki.example.org/"})
     out = p.pipe(BODY_QUESTION, USER)
     assert "/v1/source/ivanov%40corp.ru" in out
     assert "gitee.com" not in out

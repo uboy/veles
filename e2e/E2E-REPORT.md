@@ -10,7 +10,7 @@
 | Уровень | Файл | Что делает |
 |---|---|---|
 | 1. In-process E2E | `tests/e2e/test_pipeline_e2e.py` (pytest, 8 кейсов) | Полный цикл на tmp-мини-корпусе: L0 (.txt/.md) → `TxtMdParserAdapter` → canonical store (tmp) → `build_index` (numpy) → `create_app` → TestClient. Эмбеддер — детерминированный hashing-стаб (канон `veles/AGENTS.md`: тесты без загрузки моделей); retrieval/AnswerPolicy/ACL/фасад — настоящий код |
-| 2. Deployed E2E | `e2e/run_deployed_e2e.py` (standalone, stdlib-only, не pytest) | 22 автопункта A–G против живого стека на стенд + T1 MANUAL. Секреты из `~/secrets/*.env` — только в память процесса, вывод через `mask()`; счётчик z.ai-вызовов; флаги `--skip-llm`, `--only`, `--known-issue`; exit 0/1/2 (0 зелёный, 2 есть KNOWN-ISSUE) |
+| 2. Deployed E2E | `e2e/run_deployed_e2e.py` (standalone, stdlib-only, не pytest) | 22 автопункта A–G против живого стека на стенд + T1 MANUAL. Секреты из `<secrets-dir>/*.env` — только в память процесса, вывод через `mask()`; счётчик z.ai-вызовов; флаги `--skip-llm`, `--only`, `--known-issue`; exit 0/1/2 (0 зелёный, 2 есть KNOWN-ISSUE) |
 
 ### Команды запуска (точные)
 
@@ -71,7 +71,7 @@ z.ai-вызовов 3 из 6** (B7, E2, E3 — короткие, по одном
 | E2 | WebUI chat model=veles-knowledge (z.ai, вызов 2/3) | PASS | content 2014 зн., «Источники:» присутствуют (сквозной путь WebUI → фасад → синтез) |
 | E3 | WebUI chat model=glm-5.3-flash (z.ai, вызов 3/3) | PASS | 200, content 6 зн., в ответе model=glm-5.3-flash |
 | E4 | signup закрыт | PASS | POST /api/v1/auths/signup с валидной по форме формой → HTTP 403 (учётка не создаётся) |
-| F1 | pair-state моста | PASS | `~/secrets/dm-bridge-state.json` существует, `owner_chat_id` int (значение не печатается) |
+| F1 | pair-state моста | PASS | `<secrets-dir>/dm-bridge-state.json` существует, `owner_chat_id` int (значение не печатается) |
 | F2 | мост: apply_footer + форматер | PASS | 6/6 флагов: bold, одинарное экранирование `<тег>` и `&`, футер с моделью, живой `<i>` футера, двойного экранирования нет |
 | F3 | журнал моста без traceback | PASS | Traceback: 0 (окно 24ч, 10 строк) |
 | G1 | бэкап: скрипт + cron | **KNOWN-ISSUE** | cron-строка есть; скрипта по пути из cron нет — см. §5 |
@@ -129,7 +129,7 @@ z.ai-вызовов 3 из 6** (B7, E2, E3 — короткие, по одном
   менялись. Единственное добавление в прод-дерево — новый файл
   `~/proj/veles-bench/veles/e2e/run_deployed_e2e.py` (сам раннер, требование задачи).
   Временная копия `~/veles-e2e-check` после прогона удалена.
-- **Секреты:** читались из `~/secrets/*.env` в память процесса раннера; в выводе, отчёте и
+- **Секреты:** читались из `<secrets-dir>/*.env` в память процесса раннера; в выводе, отчёте и
   коммитах не печатались (маскировщик значений + userinfo-URL; строки журнала с паттернами
   секретов не печатаются вовсе — только счётчики).
 - **Telegram API:** не вызывался (мост проверен импортом с env-стабами и форматером;

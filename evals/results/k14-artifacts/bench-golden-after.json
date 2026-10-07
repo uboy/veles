@@ -9,7 +9,7 @@
   "w_dense": 1.0,
   "w_lex": 1.0,
   "depth": null,
-  "codex_boost": null,
+  "legal_boost": null,
   "filter_junk": false,
   "dedupe": false,
   "out_json": "/tmp/k14/bench-golden-after.json"

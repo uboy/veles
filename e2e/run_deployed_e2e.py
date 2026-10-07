@@ -49,7 +49,7 @@ SECRET_VALUES: list[str] = []
 SECRET_PATTERNS = [
     ("tg-bot-token", r"\b\d{8,12}:AA[A-Za-z0-9_-]{20,}"),
     ("ZAI_KEY", r"ZAI_KEY"),
-    ("dumbproxy-account", r"стенд-veles2"),
+    ("dumbproxy-account", r"proxy-account"),
     ("sk-api-key", r"sk-[A-Za-z0-9]{16,}"),
 ]
 

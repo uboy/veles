@@ -2,7 +2,7 @@
 
 Калибровка K12: RRF собирается с весами каналов (channel_weights), после чего
 к скору узлов документов, явно упомянутых в вопросе («согласно НК РФ»),
-добавляется codex_boost; мусорные узлы («Утратил силу.»-пустышки, телефоны
+добавляется legal_boost; мусорные узлы («Утратил силу.»-пустышки, телефоны
 консультаций) отсекаются из выдачи ПОСЛЕ ранжирования - индекс не меняется.
 Все параметры опциональны: None = дефолт из veles.config (поведение прода)."""
 
@@ -50,7 +50,7 @@ class Evidence:
     node_version_id: str
     text: str
     rrf: float
-    # ревью K12 P1: скор ДО codex-буста (органика); confidence и дельта конфликтов
+    # ревью K12 P1: скор ДО кодекс-буста (органика); confidence и дельта конфликтов
     # считаются по нему - бонус равен потолку нормировки и иначе обнулял бы
     # abstain-гейт для вопросов с упоминанием кодекса
     rrf_base: float | None = None
@@ -114,7 +114,7 @@ def hybrid_search(
     rrf_k: int | None = None,
     channel_weights: tuple[float, float] | None = None,
     candidate_depth: int | None = None,
-    codex_boost: float | None = None,
+    legal_boost: float | None = None,
     filter_junk: bool | None = None,
     dedupe_channels: bool | None = None,
     rerank_candidates: int | None = None,
@@ -127,9 +127,9 @@ def hybrid_search(
 
     Калибровка K12 (None = дефолт из veles.config, поведение до калибровки):
     rrf_k - константа RRF; channel_weights - веса вкладов (dense, lexical);
-    candidate_depth - глубина каналов до RRF (дефолт top_k*5); codex_boost -
+    candidate_depth - глубина каналов до RRF (дефолт top_k*5); legal_boost -
     бонус узлам документа, явно упомянутого в вопросе («согласно НК РФ»),
-    в единицах вклада ранга 1 одного канала (bonus = codex_boost/(rrf_k+1));
+    в единицах вклада ранга 1 одного канала (bonus = legal_boost/(rrf_k+1));
     filter_junk - отсекать мусорные пустышки из выдачи (is_junk_node);
     dedupe_channels - снимать дубликаты узла внутри канала (см. dedupe_pairs;
     с K14 дефолт True: на чистом индексе no-op, защищает от возврата дублей).
@@ -148,10 +148,10 @@ def hybrid_search(
         rrf_k = RRF_K
     weights = channel_weights if channel_weights is not None else (1.0, 1.0)
     depth = candidate_depth if candidate_depth is not None else top_k * 5
-    if codex_boost is None:
-        from ..config import CODEX_BOOST
+    if legal_boost is None:
+        from ..config import LEGAL_BOOST
 
-        codex_boost = CODEX_BOOST
+        legal_boost = LEGAL_BOOST
     if filter_junk is None:
         from ..config import FILTER_JUNK_NODES
 
@@ -221,14 +221,14 @@ def hybrid_search(
     # узлы этого документа получают бонус поверх RRF (только кандидаты каналов,
     # authorization уже применён; документ матчится подстрокой названия).
     rrf_base = dict(rrf)  # ревью K12 P1: органические скоры до буста - на них
-    if codex_boost > 0.0:  # считаются confidence и дельта конфликтов, иначе
-        from ..policy.identifiers import _CODEX_MAP, extract_codex_refs  # буст
+    if legal_boost > 0.0:  # считаются confidence и дельта конфликтов, иначе
+        from ..policy.identifiers import _LEGAL_CODES_MAP, extract_legal_refs  # буст
         # (= потолку нормировки) обнулял abstain-гейт «согласно НК РФ»
 
-        refs = extract_codex_refs(query_text)
+        refs = extract_legal_refs(query_text)
         if refs:
-            bonus = codex_boost / (rrf_k + 1.0)
-            needles = [_CODEX_MAP[r] for r in refs]
+            bonus = legal_boost / (rrf_k + 1.0)
+            needles = [_LEGAL_CODES_MAP[r] for r in refs]
             for nid in rrf:
                 meta = bundle.node_meta.get(nid)
                 if not meta:

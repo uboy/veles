@@ -1,6 +1,6 @@
 """Форматирование ответов для Telegram (перенос пайплайна telegram_bot_ai).
 
-Донор: uboy/telegram_bot_ai, shared/utils.py (format_markdown_to_html,
+Донор: предыдущий приватный проект, shared/utils.py (format_markdown_to_html,
 strip_html_tags) и frontend/bot_handlers.py (отправка parse_mode='HTML'
 кусками <=3900 с fallback на plain). Порт без async-зависимостей: модуль
 только преобразует текст и не знает про сеть и env.

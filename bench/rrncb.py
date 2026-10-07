@@ -27,9 +27,17 @@ from veles.ingest.pdf_text import PyMuPdfParserAdapter
 
 import os
 
-RRNCB_DIR = Path(os.environ.get("VELES_RRNCB_DIR", r"<local-pc>\proj\knowledge-sources\06_benchmarks\rrncb"))
-QA_CSV = RRNCB_DIR / "rrncb_public_dataset.csv"
-DOCS_DIR = RRNCB_DIR / "docs"
+def _rrncb() -> Path:
+    """Корень rrncb-корпуса: только из окружения, без путей в коде."""
+    v = os.environ.get("VELES_RRNCB_DIR", "").strip()
+    if not v:
+        raise RuntimeError("задай VELES_RRNCB_DIR (корень rrncb)")
+    return Path(v)
+
+
+RRNCB_DIR = Path(os.environ["VELES_RRNCB_DIR"]) if os.environ.get("VELES_RRNCB_DIR") else None
+QA_CSV = RRNCB_DIR / "rrncb_public_dataset.csv" if RRNCB_DIR else None
+DOCS_DIR = RRNCB_DIR / "docs" if RRNCB_DIR else None
 
 _WS_RE = re.compile(r"\s+")
 

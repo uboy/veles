@@ -50,7 +50,7 @@ def identifiers_missed(
 # Кодексы: аббревиатура вопроса -> ожидаемое ядро названия документа в корпусе.
 # Ф3: identifier-сигнал (ГОСТ-регэксп) не покрыл кодексные ловушки (FAR 0.8868 на
 # НК/ГК/ТК ЕАЭС) - этот словарь закрывает дыру.
-_CODEX_MAP = {
+_LEGAL_CODES_MAP = {
     "нк рф": "налоговый кодекс",
     "гк рф": "гражданский кодекс",
     "тк еаэс": "таможенный кодекс",
@@ -72,19 +72,19 @@ _CODEX_MAP = {
 }
 
 
-def extract_codex_refs(text: str) -> list[str]:
-    """Ссылки на кодексы в тексте ('согласно НК РФ') -> ключи _CODEX_MAP."""
+def extract_legal_refs(text: str) -> list[str]:
+    """Ссылки на кодексы в тексте ('согласно НК РФ') -> ключи _LEGAL_CODES_MAP."""
     t = re.sub(r"\s+", " ", text.lower().replace("ё", "е"))
-    return [k for k in _CODEX_MAP if re.search(rf"(?<![а-я]){re.escape(k)}(?![а-я])", t)]
+    return [k for k in _LEGAL_CODES_MAP if re.search(rf"(?<![а-я]){re.escape(k)}(?![а-я])", t)]
 
 
-def codex_missed(codex_refs: list[str], doc_titles: Optional[set[str]]) -> bool:
+def legal_missed(legal_refs: list[str], doc_titles: Optional[set[str]]) -> bool:
     """True, если ВСЕ упомянутые кодексы отсутствуют в корпусе (any-found:
     достаточно одного присутствующего). doc_titles=None - проверка отключена."""
-    if not codex_refs or doc_titles is None:
+    if not legal_refs or doc_titles is None:
         return False
     titles = {re.sub(r"\s+", " ", t.lower().replace("ё", "е")) for t in doc_titles}
     present = sum(
-        1 for ref in codex_refs if any(_CODEX_MAP[ref] in t for t in titles)
+        1 for ref in legal_refs if any(_LEGAL_CODES_MAP[ref] in t for t in titles)
     )
     return present == 0

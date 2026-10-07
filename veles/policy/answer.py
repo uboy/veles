@@ -15,7 +15,7 @@ from typing import Literal
 
 from ..config import ABSTAIN_CONFIDENCE, CONFLICT_SCORE_DELTA, RRF_K
 from ..retrieval.retriever import Evidence
-from .identifiers import codex_missed, identifiers_missed
+from .identifiers import legal_missed, identifiers_missed
 
 
 @dataclass
@@ -33,7 +33,7 @@ def _confidence(evidence: list[Evidence]) -> float:
     (фикс ревью Ф1: бонус после капа обнулял различимость)."""
     if not evidence:
         return 0.0
-    # ревью K12 P1: confidence по ОРГАНИЧЕСКОМУ скору (rrf_base, до codex-буста) -
+    # ревью K12 P1: confidence по ОРГАНИЧЕСКОМУ скору (rrf_base, до кодекс-буста) -
     # бонус равен потолку нормировки, и по финальному rrf любой забушенный узел
     # получал бы 1.0, отключая abstain-гейт для вопросов «согласно НК РФ»
     top = evidence[0].rrf_base if evidence[0].rrf_base is not None else evidence[0].rrf
@@ -104,7 +104,7 @@ def decide(
     threshold: float | None = None,
     query_identifiers: list[str] | None = None,
     known_identifiers: set[str] | None = None,
-    codex_refs: list[str] | None = None,
+    legal_refs: list[str] | None = None,
     doc_titles: set[str] | None = None,
 ) -> AnswerDecision:
     # ревью K14: порог читается в момент вызова (не дефолтом сигнатуры) -
@@ -114,9 +114,9 @@ def decide(
     """Identifier-grounding проверяется ПЕРВЫМ (детерминированный сигнал):
     вопрос цитирует номер документа или кодекс, которых нет в корпусе -> abstain
     независимо от скоров (Ф2: скор-гейт слеп на ближний домен, FAR=0.9; Ф3:
-    ГОСТ-сигнал не покрыл кодексы - добавлен codex-словарь)."""
+    ГОСТ-сигнал не покрыл кодексы - добавлен кодекс-словарь)."""
     ids = query_identifiers or []
-    if identifiers_missed(ids, known_identifiers) or codex_missed(codex_refs or [], doc_titles):
+    if identifiers_missed(ids, known_identifiers) or legal_missed(legal_refs or [], doc_titles):
         return AnswerDecision(
             decision="abstain",
             confidence=0.0,

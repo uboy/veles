@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import shutil
 from datetime import datetime, timezone
@@ -21,7 +22,7 @@ from ..config import MANIFESTS_DIR
 # Вышка, Модуль_1 (срез Ф1). Паттерны имён - из стандарта v3.0 §7.
 VYSHKA_MODULE1 = {
     "name": "vyshka-module1-lectures",
-    "root": Path(r"<local-pc>\OneDrive\MyDocs\diffdocs\Вышка\02_Модули\1_курс\Модуль_1"),
+    "root_sub": Path("02_Модули") / "1_курс" / "Модуль_1",
     "dest": Path("05_vyshka_academic/lectures"),
     "dir_include": re.compile(r"лекция", re.IGNORECASE),  # только каталоги лекций
     "file_include": re.compile(r"(транскрипция|пересказ)", re.IGNORECASE),
@@ -36,9 +37,7 @@ VYSHKA_MODULE1 = {
 # отзыву владельца - вопросы про производственный менеджмент не покрывались).
 VYSHKA_UM = {
     "name": "vyshka-um-production-mgmt",
-    "root": Path(
-        r"<local-pc>\OneDrive\MyDocs\diffdocs\Вышка\02_Модули\2_курс\Модуль_1\Управление производством"
-    ),
+    "root_sub": Path("02_Модули") / "2_курс" / "Модуль_1" / "Управление производством",
     "dest": Path("05_vyshka_academic/lectures/Управление производством"),
     "dir_include": re.compile(r".", re.DOTALL),  # все подкаталоги курса
     "file_include": re.compile(r"(транскрипция|пересказ)", re.IGNORECASE),
@@ -49,6 +48,22 @@ VYSHKA_UM = {
 }
 
 SPECS = {"module1": VYSHKA_MODULE1, "um": VYSHKA_UM}
+
+
+def allowlist_root() -> Path:
+    """Корень личной библиотеки: только из окружения, без путей в коде."""
+    v = os.environ.get("VELES_ALLOWLIST_ROOT", "").strip()
+    if not v:
+        raise RuntimeError(
+            "allowlist: задай VELES_ALLOWLIST_ROOT (корень библиотеки источников)")
+    return Path(v)
+
+
+def _required_env(name: str, what: str) -> str:
+    v = os.environ.get(name, "").strip()
+    if not v:
+        raise RuntimeError(f"{name} не задан ({what})")
+    return v
 
 
 class ManifestEntry(BaseModel):
@@ -76,8 +91,11 @@ def scan_and_copy(
 ) -> CorpusManifest:
     """Скан по строгому allowlist, копирование в корпус, запись манифеста в veles."""
     spec = spec or VYSHKA_MODULE1
-    corpus_root = corpus_root or Path(r"<local-pc>\proj\knowledge-sources")
-    root: Path = spec["root"]
+    corpus_root = corpus_root or Path(_required_env("VELES_CORPUS_ROOT", "корень корпуса"))
+    if "root" in spec:  # явный корень (тесты, разовый вызов) - приоритетен
+        root: Path = Path(spec["root"])
+    else:
+        root: Path = allowlist_root() / spec["root_sub"]
     manifest = CorpusManifest(
         name=spec["name"],
         created_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
