@@ -20,6 +20,7 @@ dependencies = [
 st = ["sentence-transformers>=3.0"]
 faiss = ["faiss-cpu>=1.8"]
 qdrant = ["qdrant-client>=1.10"]
+docling = ["docling>=2.0"]
 
 [project.scripts]
 veles = "veles.cli:main"

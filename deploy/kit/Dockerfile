@@ -19,7 +19,7 @@ COPY pyproject.toml ./
 RUN if [ "$TORCH_CPU" = "1" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu; \
     fi && \
-    pip install --no-cache-dir ".[st,faiss]"
+    pip install --no-cache-dir ".[st,faiss,docling]"
 
 COPY veles ./veles
 
