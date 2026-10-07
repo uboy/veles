@@ -16,6 +16,7 @@ import json
 import sys
 import urllib.error
 from pathlib import Path
+from urllib.parse import quote
 
 import pytest
 
@@ -263,6 +264,40 @@ def test_question_admin_no_act_as(pipe) -> None:
     pipe(http).pipe(BODY_QUESTION, admin)
     call = http.calls[0]
     assert "x-veles-on-behalf-of" not in call["headers"]
+
+
+def test_source_link_map_rewrites_to_web_version(pipe) -> None:
+    """Valves source_link_map: совпавший источник ссылается на веб-версию
+    (вики репозитория), слаг = название документа пробелы -> дефисы."""
+    http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
+    p = pipe(http)
+    p.valves.source_link_map = json.dumps(
+        {"Регламент": "https://gitee.com/<gitee-user>/open-harmony/wikis/"})
+    out = p.pipe(BODY_QUESTION, USER)
+    slug = quote("Регламент-отпусков", safe="-._~()")
+    web = "https://gitee.com/<gitee-user>/open-harmony/wikis/" + slug
+    assert web in out
+    assert "/v1/source/" not in out
+
+
+def test_source_link_map_no_match_keeps_local(pipe) -> None:
+    """Нет совпадения с маппингом - прежняя ссылка на локальный просмотр."""
+    http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
+    p = pipe(http)
+    p.valves.source_link_map = json.dumps(
+        {"open-harmony": "https://gitee.com/<gitee-user>/open-harmony/wikis/"})
+    out = p.pipe(BODY_QUESTION, USER)
+    assert "/v1/source/ivanov%40corp.ru" in out
+    assert "gitee.com" not in out
+
+
+def test_source_link_map_broken_json_keeps_local(pipe) -> None:
+    """Битый JSON в valves не должен ломать ответы - работает старое поведение."""
+    http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
+    p = pipe(http)
+    p.valves.source_link_map = "{не json"
+    out = p.pipe(BODY_QUESTION, USER)
+    assert "/v1/source/ivanov%40corp.ru" in out
 
 
 def test_question_abstain_honest(pipe) -> None:

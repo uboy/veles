@@ -222,10 +222,33 @@ def _asset_link(public_url: str, token: str, citation: dict) -> str:
 LOST_FORCE_PLATE = "⚠ Норма утратила силу - "
 
 
-def _render_answer(result: dict, public_url: str, token: str) -> str:
+def _web_source_link(link_map: dict, citation: dict) -> str | None:
+    """Веб-ссылка на источник по маппингу valves (репозиторий -> веб-версия
+    вики). Ключ маппинга - подстрока document_id или названия документа,
+    значение - базовый URL веб-версии; страница = название документа пробелы
+    -> дефисы (слаг страниц gitee-вики). Нет совпадения - None, работает
+    прежняя ссылка на локальный просмотр."""
+    if not link_map:
+        return None
+    doc = str(citation.get("document_id") or "")
+    title = str(citation.get("title") or "").strip()
+    for key, base in link_map.items():
+        if key and isinstance(base, str) and base.startswith(("http://", "https://")) \
+                and (key in doc or (title and key in title)):
+            slug = re.sub(r"\s+", "-", title) if title else ""
+            if not slug:
+                return None
+            return base.rstrip("/") + "/" + quote(slug, safe="-._~()")
+    return None
+
+
+def _render_answer(
+    result: dict, public_url: str, token: str, source_link_map: dict | None = None
+) -> str:
     """Рендер ответа /v1/knowledge/query - тот же, что у veles-knowledge:
     сноски [n] в тексте синтеза -> [название документа](ссылка),
-    ниже - человекочитаемые сноски-источники; вне корпуса - честный abstain."""
+    ниже - человекочитаемые сноски-источники; вне корпуса - честный abstain.
+    source_link_map (valves) переводит ссылки источников на веб-версию."""
     decision = result.get("decision")
     if decision not in ("answer", "warn_conflict"):
         reason = (result.get("diagnostics") or {}).get("reason") or ""
@@ -237,11 +260,12 @@ def _render_answer(result: dict, public_url: str, token: str) -> str:
         )
 
     citations = result.get("citations") or []
-    links = {
-        c["n"]: _source_link(public_url, token, c)
-        for c in citations
-        if c.get("document_id") and c.get("node_version_id")
-    }
+    link_map = source_link_map or {}
+    links = {}
+    for c in citations:
+        if not (c.get("document_id") and c.get("node_version_id")):
+            continue
+        links[c["n"]] = _web_source_link(link_map, c) or _source_link(public_url, token, c)
     titles = {
         c["n"]: (c.get("title") or c.get("document_id") or f"источник {c['n']}")[:80]
         for c in citations
@@ -319,6 +343,13 @@ class Pipe:
         poll_interval_seconds: float = Field(
             default=2.0,
             description="Интервал опроса статуса обработки, секунды",
+        )
+        source_link_map: str = Field(
+            default="",
+            description='JSON {"подстрока имени документа": "базовый URL веб-'
+            'версии"} - ссылки источников ведут на веб-версию (вики/репозиторий), '
+            'например {"open-harmony": "https://gitee.com/<gitee-user>/open-harmony/wikis/"}. '
+            "Пусто - ссылки на локальный просмотр источников в фасаде",
         )
 
     def __init__(self):
@@ -472,7 +503,22 @@ class Pipe:
             result = json.loads(resp_body.decode("utf-8"))
         except Exception:  # noqa: BLE001 - битый ответ фасада
             return "⚠ Фасад вернул ответ, который не удалось разобрать."
-        return _render_answer(result, public_url, token)
+        return _render_answer(
+            result, public_url, token,
+            source_link_map=self._source_link_map(),
+        )
+
+    def _source_link_map(self) -> dict:
+        """Valves source_link_map (JSON) -> dict; битый JSON - пустой маппинг
+        (прежнее поведение, функция не должна падать из-за настройки)."""
+        raw = str(getattr(self.valves, "source_link_map", "") or "").strip()
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except Exception:  # noqa: BLE001 - настройка не должна ломать ответы
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
     # ------------------------------------------------------------------- pipe
 
