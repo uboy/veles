@@ -225,22 +225,27 @@ class VelesPipeline:
         }
 
 
-def attach_citation_links(result: dict, token: str, link_secret: str = "") -> dict:
+def attach_citation_links(
+    result: dict, token: str, link_secret: str = "", mint_token_links: bool = True
+) -> dict:
     """K20: готовые ссылки источника/актива в ДАННЫЕ цитат (consumers - Pipe-функции
-    WebUI и любые клиенты /v1/knowledge/query). Правила те же, что у текстового
-    рендера: подписанные exp+sig при заданном секрете (владельческий токен в URL
-    не попадает), иначе token= - обратная совместимость. Текстовые рендеры не
-    трогает: они строят ссылки сами, поля цитат игнорируют."""
+    WebUI и любые клиенты /v1/knowledge/query). Правила: подписанные exp+sig при
+    заданном секрете (владельческий токен в URL не попадает), иначе token= - только
+    в static-режиме (mint_token_links=True). Аудит 08.10: в identity-режимах
+    владельческий токен в URL цитат утекал - теперь без секрета и без static
+    ссылки не строятся вовсе, клиент строит их сам из своей личности. Текстовые
+    рендеры не трогает: они строят ссылки сами, поля цитат игнорируют."""
     signed = bool(link_secret)
     exp = int(time.time()) + LINK_TTL_S if signed else 0
+    mint = signed or mint_token_links
     for c in result.get("citations", []):
         doc, node = c.get("document_id"), c.get("node_version_id")
-        if doc and node:
+        if doc and node and mint:
             c["source_url"] = (
                 signed_source_url(link_secret, doc, node, exp)
                 if signed else source_url(doc, node, token)
             )
-        if c.get("asset") and doc:
+        if c.get("asset") and doc and mint:
             c["asset_url"] = (
                 signed_asset_url(link_secret, doc, c["asset"], exp)
                 if signed else asset_url(doc, c["asset"], token)
@@ -248,11 +253,17 @@ def attach_citation_links(result: dict, token: str, link_secret: str = "") -> di
     return result
 
 
-def render_chat_content(result: dict, token: str = "", link_secret: str = "") -> str:
-    """Ссылки в ответе: token= (static) или подписанные exp+sig (identity-режимы,
-    ссылка живёт LINK_TTL_S - браузер не передаёт заголовки личности)."""
+def render_chat_content(
+    result: dict, token: str = "", link_secret: str = "", mint_token_links: bool = True
+) -> str:
+    """Ссылки в ответе: token= (static, mint_token_links=True) или подписанные
+    exp+sig (секрет задан; ссылка живёт LINK_TTL_S - браузер не передаёт
+    заголовки личности). Аудит 08.10: в identity-режиме без секрета владельческий
+    токен в тексте ответа утекал - теперь ссылки не строятся вовсе (источники
+    остаются списком названий, без URL)."""
     signed = bool(link_secret)
     exp = int(time.time()) + LINK_TTL_S if signed else 0
+    mint = signed or mint_token_links
     if result["decision"] not in ("answer", "warn_conflict"):
         reason = result["diagnostics"].get("reason") or ""
         return (
@@ -262,11 +273,15 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
         )
 
     def _src_link(doc_id: str, node: str) -> str:
+        if not mint:
+            return ""
         if signed:
             return signed_source_url(link_secret, doc_id, node, exp)
         return source_url(doc_id, node, token)
 
     def _asset_link(doc_id: str, name: str) -> str:
+        if not mint:
+            return ""
         if signed:
             return signed_asset_url(link_secret, doc_id, name, exp)
         return asset_url(doc_id, name, token)
@@ -276,6 +291,7 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
         for c in result.get("citations", [])
         if c.get("document_id") and c.get("node_version_id")
     }
+    links = {n: u for n, u in links.items() if u}
     # ревью 29.09: текст ссылки = человекочитаемое
     # название документа, а не голый [n] - иначе непонятно, куда ведёт ссылка
     titles = {
@@ -287,6 +303,7 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
         for c in result.get("citations", [])
         if c.get("asset") and c.get("document_id")
     ]
+    images = [u for u in images if u]
     import re as _re
 
     answer = result["answer"]
@@ -802,7 +819,8 @@ def create_app(
         # K20/K21: подписанные ссылки при заданном секрете в ЛЮБОМ режиме -
         # владельческий токен в URL цитат не попадает; без секрета - token= как раньше
         link_secret = state["link_secret"]
-        return attach_citation_links(result, state["token"], link_secret)
+        return attach_citation_links(result, state["token"], link_secret,
+                                     mint_token_links=state["identity_mode"] == "static")
 
     @app.post("/v1/chat/completions")
     def chat_completions(
@@ -826,11 +844,16 @@ def create_app(
         # K20/K21: подписанные ссылки при заданном секрете в любом режиме
         link_secret = state["link_secret"]
         # K20: те же ссылки и в данные цитат (veles.citations), текстовый рендер
-        # свои ссылки строит сам - его вывод не меняется
-        attach_citation_links(result, state["token"], link_secret)
+        # свои ссылки строит сам - его вывод не меняется. Аудит 08.10: token=
+        # в URL и тексте - только в static-режиме (иначе владельческий токен утекает)
+        minted = attach_citation_links(
+            result, state["token"], link_secret,
+            mint_token_links=state["identity_mode"] == "static",
+        )
         if result["decision"] in ("answer", "warn_conflict"):
             content = render_chat_content(
-                result, token=state["token"], link_secret=link_secret
+                minted, token=state["token"], link_secret=link_secret,
+                mint_token_links=state["identity_mode"] == "static",
             )
         elif fallback and llm and llm.enabled:
             try:
@@ -842,9 +865,15 @@ def create_app(
                     "Вопрос по документам переформулируйте или добавьте источник в базу."
                 )
             except Exception:  # noqa: BLE001 - fallback не удался -> честный abstain
-                content = render_chat_content(result, token=state["token"])
+                content = render_chat_content(
+                    minted, token=state["token"],
+                    mint_token_links=state["identity_mode"] == "static",
+                )
         else:
-            content = render_chat_content(result, token=state["token"])
+            content = render_chat_content(
+                minted, token=state["token"],
+                mint_token_links=state["identity_mode"] == "static",
+            )
         rid = result["request_id"]
         return JSONResponse({
             "id": f"chatcmpl-veles-{rid}",
