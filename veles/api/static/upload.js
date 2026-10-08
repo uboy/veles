@@ -30,15 +30,15 @@ async function loadDocs() {
 
 async function pollJob(jobId, fname) {
   const box = document.getElementById("msg");
+  let rec = null;
   for (let i = 0; i < 300; i++) {
-    let rec = null;
     try {
       const r = await fetch("/v1/documents/jobs/" + jobId, { headers: H });
       if (r.status === 404) { box.textContent = "❌ " + fname + ": джоб потерян (сервис перезапускался)"; return; }
       rec = await r.json();
       if (rec.status === "done" || rec.status === "failed") break;
     } catch (e) { /* фасад мог перезапускаться - ждём дальше */ }
-    box.textContent = "⏳ " + fname + ": " + (rec ? rec.status : "в очереди") + "...";
+    box.textContent = "⏳ " + fname + ": " + (rec && rec.status ? rec.status : "в очереди") + "...";
     await new Promise(res => setTimeout(res, 2000));
   }
   if (rec && rec.status === "done") {

@@ -12,6 +12,7 @@ bearer из VELES_API_TOKEN) | headers | jwt (корпоративный, лич
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import hmac
 import logging
@@ -103,6 +104,7 @@ def html_security_headers(allow_self_scripts: bool = False) -> dict[str, str]:
         "Referrer-Policy": "no-referrer",
         "Content-Security-Policy": (
             "default-src 'none'; " + script +
+            "style-src 'self'; connect-src 'self'; img-src 'self' data:; " +
             "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
         ),
     }
@@ -632,8 +634,8 @@ def create_app(
 
         basename = document_id.rsplit("/", 1)[-1]
         for root_dir in VELES_SOURCE_ROOTS:
-            for candidate in root_dir.rglob(basename):
-                if candidate.is_file():
+            for candidate in root_dir.rglob(glob.escape(basename)):
+                if candidate.is_file() and candidate.name == basename:
                     media = "application/pdf" if candidate.suffix.lower() == ".pdf" else (
                         "text/plain; charset=utf-8"
                     )

@@ -16,7 +16,7 @@
 github.com/uboy/veles). На машине с репозиторием:
 
 ```bash
-bash scripts/make-kit.sh                 # соберёт veles-deploy-kit-<версия>.tar.gz
+bash deploy/kit/make-kit.sh                 # соберёт veles-deploy-kit-<версия>.tar.gz
 ```
 
 Переложить архив на целевую машину (scp/флешка) и распаковать:
