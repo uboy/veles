@@ -1,0 +1,483 @@
+{
+ "summary": {
+  "model": "jinaai/jina-clip-v1",
+  "device": "cuda",
+  "images_per_book": {
+   "kormen": 15,
+   "systemdesign": 15
+  },
+  "queries": 20,
+  "hit_top3": 13,
+  "hit_top3_rate": 0.65,
+  "hit_top1": 10,
+  "hit_top1_rate": 0.5,
+  "gate_top3_080": false,
+  "seconds": {
+   "model_load": 4.4,
+   "image_encode": 1.8,
+   "queries": 0.47
+  }
+ },
+ "results": [
+  {
+   "book": "kormen",
+   "query": "схема красно-чёрного дерева",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.15618464350700378
+    },
+    {
+     "book": "kormen",
+     "page": 67,
+     "sim": 0.14690446853637695
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.13594862818717957
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "диаграмма работы алгоритма сортировки",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 45,
+     "sim": 0.15776289999485016
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.15363147854804993
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.15167945623397827
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "граф и его представление в памяти",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.15659090876579285
+    },
+    {
+     "book": "kormen",
+     "page": 67,
+     "sim": 0.15154725313186646
+    },
+    {
+     "book": "kormen",
+     "page": 45,
+     "sim": 0.14187097549438477
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "двоичное дерево поиска рисунок",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.16052091121673584
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.14931270480155945
+    },
+    {
+     "book": "kormen",
+     "page": 67,
+     "sim": 0.1492851972579956
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "хеш-таблица с цепочками схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 67,
+     "sim": 0.16625548899173737
+    },
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.15268069505691528
+    },
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.14745786786079407
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "структура данных двоичная куча",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.15816658735275269
+    },
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.15151038765907288
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.1492403745651245
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "пример разбиения быстрой сортировки",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.17419880628585815
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.16840755939483643
+    },
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.16725707054138184
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "B-дерево схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.16470719873905182
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.1622721552848816
+    },
+    {
+     "book": "kormen",
+     "page": 144,
+     "sim": 0.15797165036201477
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "таблица матриц динамического программирования",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.16082313656806946
+    },
+    {
+     "book": "kormen",
+     "page": 67,
+     "sim": 0.1606614738702774
+    },
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.15543338656425476
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "дерево рекурсивных вызовов схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.18572938442230225
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.17649000883102417
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.17415493726730347
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "systemdesign",
+   "query": "балансировщик нагрузки схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.16345196962356567
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.15821638703346252
+    },
+    {
+     "book": "kormen",
+     "page": 144,
+     "sim": 0.15748241543769836
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "архитектура кэша схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 1,
+     "sim": 0.14792242646217346
+    },
+    {
+     "book": "systemdesign",
+     "page": 1,
+     "sim": 0.14651966094970703
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.13946270942687988
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "шардирование базы данных схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.15942147374153137
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.15428690612316132
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.15313655138015747
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "схема работы CDN",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.17199558019638062
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.16627314686775208
+    },
+    {
+     "book": "systemdesign",
+     "page": 133,
+     "sim": 0.16159290075302124
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "очередь сообщений архитектура",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.15829342603683472
+    },
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.15775644779205322
+    },
+    {
+     "book": "systemdesign",
+     "page": 1,
+     "sim": 0.15630561113357544
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "микросервисная архитектура схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.15683120489120483
+    },
+    {
+     "book": "kormen",
+     "page": 45,
+     "sim": 0.15628470480442047
+    },
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.15448546409606934
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "репликация базы данных схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.17138341069221497
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.1667366325855255
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.16530129313468933
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "ограничитель частоты запросов схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.16196556389331818
+    },
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.1596199870109558
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.15301530063152313
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "хранение данных архитектура",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 1,
+     "sim": 0.1418548822402954
+    },
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.14164869487285614
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.1413823515176773
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "systemdesign",
+   "query": "согласованность данных диаграмма",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 78,
+     "sim": 0.1597365438938141
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.15904554724693298
+    },
+    {
+     "book": "kormen",
+     "page": 89,
+     "sim": 0.15762224793434143
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  }
+ ]
+}

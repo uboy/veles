@@ -90,10 +90,9 @@ def extract_images(
                 continue
             if pix.colorspace is None:
                 continue
-            # PNG пишет только grayscale/RGB: CMYK и всё с альфа-каналом
-            # конвертируется (naive n-alpha проверка ломалась на CMYK n=4)
-            if pix.colorspace.n not in (1, 3) or pix.alpha:
-                pix = fitz.Pixmap(fitz.csRGB, pix)
+            # PNG пишет только gray/RGB: CMYK, ICC- и индексированные
+            # цветности конвертируются безусловно (n-подсчёт их не различает)
+            pix = fitz.Pixmap(fitz.csRGB, pix)
             if pix.width < min_dim or pix.height < min_dim:
                 continue
             data = pix.tobytes("png")

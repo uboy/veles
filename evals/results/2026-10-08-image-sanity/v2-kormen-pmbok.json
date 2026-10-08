@@ -1,0 +1,483 @@
+{
+ "summary": {
+  "model": "jinaai/jina-clip-v2",
+  "device": "cuda",
+  "images_per_book": {
+   "kormen": 15,
+   "pmbok": 3
+  },
+  "queries": 20,
+  "hit_top3": 15,
+  "hit_top3_rate": 0.75,
+  "hit_top1": 13,
+  "hit_top1_rate": 0.65,
+  "gate_top3_080": false,
+  "seconds": {
+   "model_load": 220.8,
+   "image_encode": 2.2,
+   "queries": 6.78
+  }
+ },
+ "results": [
+  {
+   "book": "kormen",
+   "query": "схема красно-чёрного дерева",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.27269378304481506
+    },
+    {
+     "book": "kormen",
+     "page": 144,
+     "sim": 0.24245578050613403
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.2420656383037567
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "диаграмма работы алгоритма сортировки",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.36579594016075134
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.3194567859172821
+    },
+    {
+     "book": "kormen",
+     "page": 144,
+     "sim": 0.30658867955207825
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "граф и его представление в памяти",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.33180081844329834
+    },
+    {
+     "book": "kormen",
+     "page": 67,
+     "sim": 0.3216162323951721
+    },
+    {
+     "book": "kormen",
+     "page": 78,
+     "sim": 0.3172832727432251
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "двоичное дерево поиска рисунок",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.31513044238090515
+    },
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.29790303111076355
+    },
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.2853611409664154
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "хеш-таблица с цепочками схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.34374457597732544
+    },
+    {
+     "book": "kormen",
+     "page": 144,
+     "sim": 0.288750022649765
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.28525134921073914
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "структура данных двоичная куча",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.33420825004577637
+    },
+    {
+     "book": "kormen",
+     "page": 111,
+     "sim": 0.32115909457206726
+    },
+    {
+     "book": "kormen",
+     "page": 100,
+     "sim": 0.3012314438819885
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "пример разбиения быстрой сортировки",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.3794950246810913
+    },
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.3296929597854614
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.32703226804733276
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "B-дерево схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.2575700283050537
+    },
+    {
+     "book": "kormen",
+     "page": 23,
+     "sim": 0.23942667245864868
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.23646193742752075
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "таблица матриц динамического программирования",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.4079301357269287
+    },
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.3540627062320709
+    },
+    {
+     "book": "kormen",
+     "page": 78,
+     "sim": 0.3373357653617859
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "kormen",
+   "query": "дерево рекурсивных вызовов схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.3309829831123352
+    },
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.3031561076641083
+    },
+    {
+     "book": "kormen",
+     "page": 133,
+     "sim": 0.29611936211586
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "pmbok",
+   "query": "процессы управления проектом схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.26536399126052856
+    },
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.24718983471393585
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.2374238669872284
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "pmbok",
+   "query": "жизненный цикл проекта диаграмма",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 23,
+     "sim": 0.19811999797821045
+    },
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.19356399774551392
+    },
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.1925918161869049
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "pmbok",
+   "query": "группы процессов управления проектом",
+   "top3": [
+    {
+     "book": "pmbok",
+     "page": 1,
+     "sim": 0.27907150983810425
+    },
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.2650633454322815
+    },
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.22357338666915894
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "pmbok",
+   "query": "заинтересованные стороны проекта схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.29548293352127075
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.2669318914413452
+    },
+    {
+     "book": "kormen",
+     "page": 23,
+     "sim": 0.26655691862106323
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "pmbok",
+   "query": "управление рисками проекта диаграмма",
+   "top3": [
+    {
+     "book": "pmbok",
+     "page": 1,
+     "sim": 0.23685455322265625
+    },
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.22011393308639526
+    },
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.21964684128761292
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "pmbok",
+   "query": "организационная структура проекта схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 23,
+     "sim": 0.2692244350910187
+    },
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.2564077377319336
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.2440062314271927
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "pmbok",
+   "query": "управление стоимостью проекта процесс",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 155,
+     "sim": 0.26680082082748413
+    },
+    {
+     "book": "pmbok",
+     "page": 1,
+     "sim": 0.24612346291542053
+    },
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.23414407670497894
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": false
+  },
+  {
+   "book": "pmbok",
+   "query": "взаимосвязи знаний управления проектом",
+   "top3": [
+    {
+     "book": "pmbok",
+     "page": 1,
+     "sim": 0.26984864473342896
+    },
+    {
+     "book": "kormen",
+     "page": 45,
+     "sim": 0.2661512792110443
+    },
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.2652759253978729
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": true
+  },
+  {
+   "book": "pmbok",
+   "query": "управление качеством схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 122,
+     "sim": 0.27528589963912964
+    },
+    {
+     "book": "kormen",
+     "page": 45,
+     "sim": 0.2621857821941376
+    },
+    {
+     "book": "kormen",
+     "page": 67,
+     "sim": 0.2583826184272766
+    }
+   ],
+   "hit_top3": false,
+   "hit_top1": false
+  },
+  {
+   "book": "pmbok",
+   "query": "устав проекта и его окружение схема",
+   "top3": [
+    {
+     "book": "kormen",
+     "page": 23,
+     "sim": 0.3117485046386719
+    },
+    {
+     "book": "kormen",
+     "page": 56,
+     "sim": 0.3093842566013336
+    },
+    {
+     "book": "pmbok",
+     "page": 1,
+     "sim": 0.28736698627471924
+    }
+   ],
+   "hit_top3": true,
+   "hit_top1": false
+  }
+ ]
+}

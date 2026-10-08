@@ -1,0 +1,27 @@
+{
+ "steps": [
+  {
+   "step": "query",
+   "decision": "answer",
+   "images_count": 3,
+   "docs": [
+    "docs/book_a.pdf"
+   ],
+   "has_asset_url": true
+  },
+  {
+   "step": "asset_fetch",
+   "status": 200,
+   "content_type": "image/png",
+   "bytes": 46577
+  },
+  {
+   "step": "groups_personal_only",
+   "docs": [
+    "docs/book_a.pdf"
+   ],
+   "pages_ok": true
+  }
+ ],
+ "verdict": "PASS"
+}
