@@ -254,6 +254,7 @@ def build_image_index(
     batch: int = 8,
     limit_per_doc: int | None = None,
     caption_weight: float = 0.5,
+    skip_covers: bool = True,
 ) -> dict:
     """Сборка индекса: инвентарь -> кодирование файлов -> сохранение.
 
@@ -264,6 +265,14 @@ def build_image_index(
     сигнал. Возвращает сводку - число проиндексированных обязано сойтись
     с манифестом."""
     records, skipped = inventory_from_meta(node_meta, canonical_dirs, limit_per_doc)
+    covers = 0
+    if skip_covers:
+        # аудит выдачи 08.10: обложка (страница 1) содержит название документа -
+        # тематически близка любому вопросу своей тематики и вытесняла содержательные
+        # схемы даже после смешивания подписи. Обложки в индекс не берутся.
+        keep = [r for r in records if r.page != 1]
+        covers = len(records) - len(keep)
+        records = keep
     index = ImageIndex(dim=embedder.dim)
     for i in range(0, len(records), batch):
         chunk = records[i : i + batch]
@@ -278,6 +287,7 @@ def build_image_index(
     index.save(out_dir)
     return {
         "indexed": len(index.records),
+        "covers_skipped": covers,
         "skipped": len(skipped),
         "skip_reasons": sorted({s["reason"] for s in skipped}),
         "dim": index.dim,

@@ -28,6 +28,8 @@ def main() -> None:
     ap.add_argument("--dim", type=int, default=None)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--limit-per-doc", type=int, default=None, help="пробная сборка")
+    ap.add_argument("--keep-covers", action="store_true",
+                    help="не исключать обложки (картинки страницы 1)")
     args = ap.parse_args()
 
     from veles.config import CANONICAL_DIR, IMAGE_DIM, IMAGE_MODEL, INDEX_DIR, VELES_DATA
@@ -59,6 +61,7 @@ def main() -> None:
         out_dir,
         batch=args.batch,
         limit_per_doc=args.limit_per_doc,
+        skip_covers=not args.keep_covers,
     )
     report["seconds"] = round(time.time() - t0, 1)
     (Path(report["out_dir"]) / "build-report.json").write_text(
