@@ -146,6 +146,30 @@ def inventory_from_meta(
     return records, skipped
 
 
+def _load_store(dir_path: Path, dim: int):
+    """Восстановление хранилища векторов, записанного ImageIndex.save
+    (у VectorStore протокола своего load нет)."""
+    from .vector_store import FaissFlatStore, NumpyFlatStore
+
+    if (dir_path / "faiss.index").exists():
+        import faiss
+
+        store = FaissFlatStore(dim)
+        store.index = faiss.read_index(str(dir_path / "faiss.index"))
+        store.ids = json.loads(
+            (dir_path / "faiss_ids.json").read_text(encoding="utf-8")
+        )
+        return store
+    if (dir_path / "numpy_matrix.npy").exists():
+        store = NumpyFlatStore(dim)
+        store.matrix = np.load(dir_path / "numpy_matrix.npy")
+        store.ids = json.loads(
+            (dir_path / "numpy_ids.json").read_text(encoding="utf-8")
+        )
+        return store
+    raise FileNotFoundError(f"в {dir_path} нет ни faiss.index, ни numpy_matrix.npy")
+
+
 class ImageIndex:
     """Хранилище векторов картинок + записи; тот же VectorStore, что у текста."""
 
@@ -203,7 +227,7 @@ class ImageIndex:
     @classmethod
     def load(cls, dir_path: Path, store=None) -> "ImageIndex":
         meta = json.loads((dir_path / "image-meta.json").read_text(encoding="utf-8"))
-        index = cls(dim=meta["dim"], store=store)
+        index = cls(dim=meta["dim"], store=store or _load_store(dir_path, meta["dim"]))
         index.records = [
             ImageRecord(**json.loads(line))
             for line in (dir_path / "records.jsonl").read_text(encoding="utf-8").splitlines()
