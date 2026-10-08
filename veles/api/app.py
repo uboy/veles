@@ -206,11 +206,19 @@ class VelesPipeline:
                     llm_used = True
                 except Exception as e:  # noqa: BLE001 - деградация к extractive
                     llm_error = str(e)[:200]
+        # Картинный канал (план docs/plan/poisk-po-izobrazheniyam): картинки
+        # идут ОТДЕЛЬНЫМ списком - текстовые citations/evidence остаются
+        # прежними (обратная совместимость клиентов, ноль регрессии);
+        # канал выключен (VELES_IMAGE_INDEX_DIR пуст) = пустой список.
+        from ..retrieval.image_retriever import search_images
+
+        images = search_images(query, allowed_groups=allowed_groups)
         return {
             "request_id": request_id(),
             "decision": decision.decision,
             "answer": answer,
             "citations": citations,
+            "images": images,
             "evidence": [
                 {"n": i + 1, "text": ev.text, "rrf": ev.rrf}
                 for i, ev in enumerate(decision.evidence[:top_k])
@@ -244,6 +252,19 @@ def attach_citation_links(result: dict, token: str, link_secret: str = "") -> di
             c["asset_url"] = (
                 signed_asset_url(link_secret, doc, c["asset"], exp)
                 if signed else asset_url(doc, c["asset"], token)
+            )
+    # Картинки картинского канала: те же правила ссылок, что у цитат
+    for im in result.get("images", []):
+        doc, node = im.get("document_id"), im.get("node_version_id")
+        if doc and node:
+            im["source_url"] = (
+                signed_source_url(link_secret, doc, node, exp)
+                if signed else source_url(doc, node, token)
+            )
+        if im.get("asset") and doc:
+            im["asset_url"] = (
+                signed_asset_url(link_secret, doc, im["asset"], exp)
+                if signed else asset_url(doc, im["asset"], token)
             )
     return result
 
@@ -312,6 +333,23 @@ def render_chat_content(result: dict, token: str = "", link_secret: str = "") ->
                       else f"  {label}")
     for url in images:
         blocks.append(f"![изображение]({url})")
+    # Картинный канал: картинки, найденные мультимодальным поиском; дубли
+    # активов, уже показанных из цитат, не повторяем
+    shown_assets = {
+        (c["document_id"], c["asset"])
+        for c in result.get("citations", [])
+        if c.get("asset") and c.get("document_id")
+    }
+    for im in result.get("images", []):
+        pair = (im.get("document_id"), im.get("asset"))
+        if not all(pair) or pair in shown_assets:
+            continue
+        shown_assets.add(pair)
+        label = (im.get("title") or im["document_id"])[:80]
+        page = f", стр. {im['page']}" if im.get("page") else ""
+        blocks.append(
+            f"![изображение]({_asset_link(im['document_id'], im['asset'])}) «{label}»{page}"
+        )
     if result["decision"] == "warn_conflict":
         conflicts = result.get("diagnostics", {}).get("conflicts") or []
         if conflicts:

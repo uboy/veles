@@ -97,6 +97,19 @@ VELES_RERANKER_BATCH = _env_int("VELES_RERANKER_BATCH", 0)
 # Глубина пула кандидатов под rerank (узлов после RRF/буста; бриф K17 - 25).
 RERANK_CANDIDATES = 25
 
+# Картинный канал (план docs/plan/poisk-po-izobrazheniyam): отдельный векторный
+# индекс по активам-картинкам документов, поиск текстом запроса через
+# мультимодальную модель, результаты - отдельным списком images в ответе API
+# (текстовая выдача не меняется). Пусто (дефолт) = канал выключен: ни индекс,
+# ни модель не загружаются, поведение прежнее. Каталог индекса строится
+# scripts/build_image_index.py и содержит records.jsonl + векторное хранилище.
+IMAGE_INDEX_DIR = os.environ.get("VELES_IMAGE_INDEX_DIR", "")
+IMAGE_MODEL = os.environ.get("VELES_IMAGE_MODEL", "jinaai/jina-clip-v2")
+IMAGE_DEVICE = os.environ.get("VELES_IMAGE_DEVICE", "cpu")
+# MRL-усечение вектора модели (программируемая размерность); 0 = полный размер.
+IMAGE_DIM = _env_int("VELES_IMAGE_DIM", 256)
+IMAGE_TOPK = _env_int("VELES_IMAGE_TOPK", 3)
+
 
 def _env_float(name: str, default: float) -> float:
     """float из env без роняния импорта (та же дисциплина, что _env_int)."""
