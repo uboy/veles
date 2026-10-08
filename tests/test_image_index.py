@@ -47,6 +47,9 @@ class FakeImageEmbedder:
 
         return np.stack([_vec(os.path.basename(p), self.dim) for p in paths])
 
+    def embed_texts(self, texts) -> np.ndarray:
+        return np.stack([_vec(t, self.dim) for t in texts])
+
     def embed_query(self, text: str) -> np.ndarray:
         return _vec(text, self.dim)
 
