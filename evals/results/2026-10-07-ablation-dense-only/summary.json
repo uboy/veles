@@ -1,0 +1,37 @@
+{
+ "protocol": "dense-only абляция (BM25-канал выключен, w_lex=0), тот же корпус и флаги, что у базлайна K17 и EG2-замера",
+ "date": "2026-10-07",
+ "host": "bm1, in-process, индекс 127 499 узлов",
+ "e5_baseline_hybrid": {
+  "golden_k14_57": {
+   "r_at_5": 0.983,
+   "top1": 0.86,
+   "mrr": 0.915
+  },
+  "rrncb50_50": {
+   "r_at_5": 1.0,
+   "top1": 0.6,
+   "mrr": 0.724
+  }
+ },
+ "dense_only": {
+  "golden_k14_57": {
+   "r_at_5": 0.947,
+   "top1": 0.702,
+   "mrr": 0.817
+  },
+  "rrncb50_50": {
+   "r_at_5": 0.74,
+   "top1": 0.42,
+   "mrr": 0.532
+  }
+ },
+ "latency_ms_cpu": {
+  "e5_embed_query": 12,
+  "hybrid_search_127500_nodes": 193
+ },
+ "files": [
+  "dense-only-golden.json",
+  "dense-only-rrncb.json"
+ ]
+}
