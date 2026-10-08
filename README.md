@@ -5,7 +5,7 @@ Knowledge Core: личная и корпоративная база знаний
 задел на старте (интерфейсы), build-out позже.
 
 - Архитектурный стандарт: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (v3.0)
-- Базис кода и порт-карта из `telegram_bot_ai`: [docs/implementation-baseline.md](docs/implementation-baseline.md)
+- Базис кода перенесён из предыдущего приватного проекта (порт-карта в истории).
 - Каталог корпуса: `~/proj/knowledge-sources/` (заполняется по allowlist-конвейеру, §7 стандарта)
 - Трекер-карточка эпика: ai-tracker `work/corp-ai-kb/task-corp-ai-kb-architecture-and-prototype.md`
 
