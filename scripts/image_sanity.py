@@ -52,6 +52,18 @@ DEFAULT_QUERIES: dict[str, list[str]] = {
         "управление качеством схема",
         "устав проекта и его окружение схема",
     ],
+    "systemdesign": [
+        "балансировщик нагрузки схема",
+        "архитектура кэша схема",
+        "шардирование базы данных схема",
+        "схема работы CDN",
+        "очередь сообщений архитектура",
+        "микросервисная архитектура схема",
+        "репликация базы данных схема",
+        "ограничитель частоты запросов схема",
+        "хранение данных архитектура",
+        "согласованность данных диаграмма",
+    ],
 }
 
 
@@ -78,7 +90,9 @@ def extract_images(
                 continue
             if pix.colorspace is None:
                 continue
-            if pix.n - pix.alpha > 3:
+            # PNG пишет только grayscale/RGB: CMYK и всё с альфа-каналом
+            # конвертируется (naive n-alpha проверка ломалась на CMYK n=4)
+            if pix.colorspace.n not in (1, 3) or pix.alpha:
                 pix = fitz.Pixmap(fitz.csRGB, pix)
             if pix.width < min_dim or pix.height < min_dim:
                 continue
