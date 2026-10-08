@@ -1,0 +1,168 @@
+{
+ "verdict": {
+  "queries": 10,
+  "queries_with_images": 10,
+  "images_total": 30,
+  "assets_fetched_200": 30,
+  "verdict": "PASS"
+ },
+ "results": [
+  {
+   "query": "как настроить сборку проекта",
+   "seconds": 4.7,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10865_index.pdf",
+    "docs/Data1_10_10872_index.pdf"
+   ],
+   "pages": [
+    6,
+    4,
+    6
+   ]
+  },
+  {
+   "query": "схема архитектуры системы",
+   "seconds": 0.6,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10866_index.pdf",
+    "docs/Data1_11_11285_index.pdf",
+    "docs/Data1_11_11295_index.pdf"
+   ],
+   "pages": [
+    30,
+    4,
+    4
+   ]
+  },
+  {
+   "query": "диаграмма компонентов",
+   "seconds": 0.5,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10865_index.pdf",
+    "docs/Data1_11_11285_index.pdf"
+   ],
+   "pages": [
+    30,
+    5,
+    33
+   ]
+  },
+  {
+   "query": "как посмотреть состояние сервиса",
+   "seconds": 0.6,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10865_index.pdf",
+    "docs/Data1_10_10866_index.pdf",
+    "docs/Data1_2_2070_index.pdf"
+   ],
+   "pages": [
+    4,
+    6,
+    2
+   ]
+  },
+  {
+   "query": "настройка сети и портов",
+   "seconds": 0.6,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10865_index.pdf",
+    "docs/Data1_11_11285_index.pdf"
+   ],
+   "pages": [
+    6,
+    6,
+    35
+   ]
+  },
+  {
+   "query": "управление доступом и права",
+   "seconds": 0.6,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10865_index.pdf",
+    "docs/Data1_10_10872_index.pdf",
+    "docs/Data1_2_2070_index.pdf"
+   ],
+   "pages": [
+    4,
+    2,
+    6
+   ]
+  },
+  {
+   "query": "процесс выпуска релиза",
+   "seconds": 0.5,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10865_index.pdf",
+    "docs/Data1_10_10866_index.pdf",
+    "docs/Data1_10_10872_index.pdf"
+   ],
+   "pages": [
+    4,
+    6,
+    4
+   ]
+  },
+  {
+   "query": "работа с базой данных",
+   "seconds": 0.6,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10865_index.pdf",
+    "docs/Data1_10_10872_index.pdf",
+    "docs/Data1_2_2070_index.pdf"
+   ],
+   "pages": [
+    2,
+    4,
+    6
+   ]
+  },
+  {
+   "query": "инструменты разработчика",
+   "seconds": 0.5,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10865_index.pdf",
+    "docs/Data1_10_10872_index.pdf",
+    "docs/Data1_11_11285_index.pdf"
+   ],
+   "pages": [
+    6,
+    33,
+    4
+   ]
+  },
+  {
+   "query": "жизненный цикл приложения",
+   "seconds": 0.5,
+   "images": 3,
+   "assets_200": 3,
+   "docs": [
+    "docs/Data1_10_10866_index.pdf",
+    "docs/Data1_10_10872_index.pdf",
+    "docs/Data1_2_2070_index.pdf"
+   ],
+   "pages": [
+    4,
+    4,
+    2
+   ]
+  }
+ ]
+}
