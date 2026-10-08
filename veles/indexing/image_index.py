@@ -67,6 +67,12 @@ class JinaClipEmbedder:
             vecs = self.model.encode_image(imgs)
         return self._norm_trunc(vecs)
 
+    def embed_texts(self, texts: Sequence[str]) -> np.ndarray:
+        """Текстовые векторы (подписи картинок) - та же размерность."""
+        with self._torch.no_grad():
+            vecs = self.model.encode_text(list(texts))
+        return self._norm_trunc(vecs)
+
     def embed_query(self, text: str) -> np.ndarray:
         with self._torch.no_grad():
             vecs = self.model.encode_text([text])
@@ -82,6 +88,7 @@ class ImageRecord:
     title: str  # подпись/заголовок раздела из парсера
     access_groups: list[str]
     path: str  # абсолютный путь файла на машине сборки
+    caption: str = ""  # подпись + разделы: текстовый сигнал поверх пикселей
 
     def public(self) -> dict:
         """Поля записи для ответа API (путь файла наружу не идёт).
@@ -132,6 +139,8 @@ def inventory_from_meta(
                             "reason": "asset-file-missing"})
             continue
         per_doc[doc_id] = per_doc.get(doc_id, 0) + 1
+        heading = " > ".join(str(h) for h in (meta.get("heading_path") or []))
+        caption = " ".join(f"{heading} {meta.get('text', '')}".split())
         records.append(
             ImageRecord(
                 image_id=nid,
@@ -141,6 +150,7 @@ def inventory_from_meta(
                 title=" ".join(str(meta.get("title", "")).split()),
                 access_groups=list(meta.get("access_groups") or []),
                 path=str(found),
+                caption=caption,
             )
         )
     return records, skipped
@@ -243,21 +253,41 @@ def build_image_index(
     out_dir: Path,
     batch: int = 8,
     limit_per_doc: int | None = None,
+    caption_weight: float = 0.5,
+    skip_covers: bool = True,
 ) -> dict:
     """Сборка индекса: инвентарь -> кодирование файлов -> сохранение.
 
-    Возвращает сводку (проиндексировано/пропущено/размерности) - она идёт в
-    отчёт сборки, число проиндексированных обязано сойтись с манифестом."""
+    Аудит выдачи 08.10: обложки документов вытесняли содержательные схемы
+    (название документа тематически близко любому вопросу). Вектор картинки
+    смешивается с вектором её подписи и разделов (caption_weight, 50/50 по
+    умолчанию): содержательная диаграмма получает и визуальный, и текстовый
+    сигнал. Возвращает сводку - число проиндексированных обязано сойтись
+    с манифестом."""
     records, skipped = inventory_from_meta(node_meta, canonical_dirs, limit_per_doc)
+    covers = 0
+    if skip_covers:
+        # аудит выдачи 08.10: обложка (страница 1) содержит название документа -
+        # тематически близка любому вопросу своей тематики и вытесняла содержательные
+        # схемы даже после смешивания подписи. Обложки в индекс не берутся.
+        keep = [r for r in records if r.page != 1]
+        covers = len(records) - len(keep)
+        records = keep
     index = ImageIndex(dim=embedder.dim)
     for i in range(0, len(records), batch):
         chunk = records[i : i + batch]
-        vecs = embedder.embed_images([r.path for r in chunk])
+        vecs = np.asarray(embedder.embed_images([r.path for r in chunk]), dtype=np.float32)
+        if caption_weight > 0:
+            texts = [r.caption or r.title for r in chunk]
+            tvecs = np.asarray(embedder.embed_texts(texts), dtype=np.float32)
+            vecs = vecs + caption_weight * tvecs
+            vecs /= np.linalg.norm(vecs, axis=1, keepdims=True) + 1e-9
         index.add(chunk, vecs)
         print(f"[image-index] {len(index.records)}/{len(records)}", flush=True)
     index.save(out_dir)
     return {
         "indexed": len(index.records),
+        "covers_skipped": covers,
         "skipped": len(skipped),
         "skip_reasons": sorted({s["reason"] for s in skipped}),
         "dim": index.dim,
