@@ -182,3 +182,64 @@ def test_narrow_group_gets_full_topk():
     assert len(evidence) == 5  # раньше было 0 - неавторизованные съели глубину
     assert all(e.citations[0].document_id == "docs/hr.md" for e in evidence)
     assert "n30" in ids  # первый personal-узел добрался из глубины каналов
+
+
+# --- Фикс 5 (аудит 08.10, ранжирование): тема вопроса в названии документа ----
+
+
+def _titled_bundle():
+    """10 узлов 'Setup Guide' наверху каналов, 5 узлов 'Sync Build' - глубже;
+    по словам содержания обе темы совпадают с вопросом, различие - название."""
+
+    class OrderedVector:
+        def search(self, q, top_k=10):
+            ids = [f"s{i}" for i in range(10)] + [f"b{i}" for i in range(5)]
+            return [(i, 1.0 / (n + 1)) for n, i in enumerate(ids[:top_k])]
+
+    meta = {}
+    for i in range(10):
+        meta[f"s{i}"] = {
+            "text": "repo sync and build instructions for the platform",
+            "access_groups": ["personal"], "title": "Setup Guide",
+            "document_id": "docs/setup.md", "heading_path": [],
+            "provenance": {"adapter": "t", "source_id": "setup.md", "lines": None},
+        }
+    for i in range(5):
+        meta[f"b{i}"] = {
+            "text": "repo sync and build instructions for the platform",
+            "access_groups": ["personal"], "title": "Sync Build",
+            "document_id": "docs/sync-build.md", "heading_path": [],
+            "provenance": {"adapter": "t", "source_id": "sync-build.md", "lines": None},
+        }
+    return IndexBundle(vector=OrderedVector(), bm25=OrderedVector(), node_meta=meta)
+
+
+def test_title_boost_lifts_matching_document():
+    import numpy as np
+
+    class FakeEmbedder:
+        dim = 4
+
+        def embed_query(self, text):
+            return np.zeros(4, dtype=np.float32)
+
+    ev = hybrid_search(_titled_bundle(), np.zeros(4, dtype=np.float32),
+                       "how to build and sync openharmony", top_k=5,
+                       title_boost=1.0)
+    assert any(e.citations[0].document_id == "docs/sync-build.md" for e in ev), \
+        [e.citations[0].document_id for e in ev]
+
+
+def test_title_boost_zero_keeps_order():
+    import numpy as np
+
+    class FakeEmbedder:
+        dim = 4
+
+        def embed_query(self, text):
+            return np.zeros(4, dtype=np.float32)
+
+    ev = hybrid_search(_titled_bundle(), np.zeros(4, dtype=np.float32),
+                       "how to build and sync openharmony", top_k=3,
+                       title_boost=0.0)
+    assert all(e.citations[0].document_id == "docs/setup.md" for e in ev)

@@ -86,6 +86,14 @@ def is_junk_node(text: str) -> bool:
     return any(rx.search(low) for rx in _JUNK_RES)
 
 
+_QUERY_STOPWORDS = frozenset(
+    """the a an and or of in on for to do does how what why when where which is are
+    was were be been being this that these those it its as at by with from into about
+    как что где когда почему который эта это этот или и в во на с со по для про из под
+    над при чтобы есть были быть свой своя""".split()
+)
+
+
 def dedupe_pairs(pairs: list[tuple[str, float]]) -> list[tuple[str, float]]:
     """Снятие дубликатов узла внутри канала (первое вхождение = лучший скор).
 
@@ -115,6 +123,7 @@ def hybrid_search(
     channel_weights: tuple[float, float] | None = None,
     candidate_depth: int | None = None,
     legal_boost: float | None = None,
+    title_boost: float | None = None,
     filter_junk: bool | None = None,
     dedupe_channels: bool | None = None,
     rerank_candidates: int | None = None,
@@ -152,6 +161,10 @@ def hybrid_search(
         from ..config import LEGAL_BOOST
 
         legal_boost = LEGAL_BOOST
+    if title_boost is None:
+        from ..config import TITLE_BOOST
+
+        title_boost = TITLE_BOOST
     if filter_junk is None:
         from ..config import FILTER_JUNK_NODES
 
@@ -244,6 +257,29 @@ def hybrid_search(
                     title = " ".join(str(meta.get("title", "")).lower().replace("ё", "е").split())
                     if any(n in title for n in needles):
                         rrf[nid] += bonus
+
+        # Аудит 08.10: тема вопроса в НАЗВАНИИ документа - сильный сигнал
+        # ("Sync Build" по "how to build and sync"): название раньше не участвовало
+        # в поиске, и такой документ терялся за страницами, целиком посвящёнными
+        # теме. Покрытие >= половины значимых слов вопроса -> бонус, пропорциональный
+        # покрытию (стоп-слова вопроса и короткие токены не считаются).
+        if title_boost > 0.0 and len(rrf) > 1:
+            q_words = {
+                w for w in re.findall(r"[a-zа-яё0-9]{3,}", query_text.lower())
+                if w not in _QUERY_STOPWORDS
+            }
+            if len(q_words) >= 2:
+                for nid in rrf:
+                    meta = bundle.node_meta.get(nid)
+                    if not meta:
+                        continue
+                    t_words = set(re.findall(
+                        r"[a-zа-яё0-9]{3,}", str(meta.get("title", "")).lower()))
+                    if not t_words:
+                        continue
+                    coverage = len(q_words & t_words) / len(q_words)
+                    if coverage >= 0.5:
+                        rrf[nid] += title_boost * coverage / (rrf_k + 1.0)
 
         ordered = sorted(rrf.items(), key=lambda x: -x[1])
         if depth >= depth_max:

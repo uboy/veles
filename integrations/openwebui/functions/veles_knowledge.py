@@ -235,7 +235,9 @@ def _web_source_link(link_map: dict, citation: dict) -> str | None:
     for key, base in link_map.items():
         if key and isinstance(base, str) and base.startswith(("http://", "https://")) \
                 and (key in doc or (title and key in title)):
-            slug = re.sub(r"\s+", "-", title) if title else ""
+            # слаг страниц gitee-вики: амперсанд превращается в дефис
+            # (аудит 08.10: %26 в адресе даёт пустую заглушку gitee вместо страницы)
+            slug = re.sub(r"\s+", "-", title.replace("&", "-")) if title else ""
             if not slug:
                 return None
             return base.rstrip("/") + "/" + quote(slug, safe="-._~()")

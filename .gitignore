@@ -5,3 +5,6 @@ __pycache__/
 .venv/
 COMMIT.txt
 .env
+build/
+dist/
+veles.spec
