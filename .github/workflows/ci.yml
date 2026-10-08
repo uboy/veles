@@ -1,0 +1,27 @@
+name: tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Установка пакета с модулями поиска
+        run: pip install -e ".[st,faiss]"
+      - name: Тесты (без e2e и без сетевых проверок)
+        run: python -m pytest tests/ --ignore=tests/e2e -q
+        env:
+          # изоляция разбора выключена: spawn в CI не наследует окружение тестов
+          VELES_QUEUE_PARSE_TIMEOUT_S: "0"
+          # молчаливый прогресс-бар и телеметрия в логах CI не нужны
+          HF_HUB_DISABLE_PROGRESS_BARS: "1"
+          HF_HUB_DISABLE_TELEMETRY: "1"

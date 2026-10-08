@@ -198,46 +198,69 @@ def hybrid_search(
             return meta.get("status", "current") == "current"
         return meta.get("revision_id", "r1") == revision
 
-    dense = [
-        (nid, s) for nid, s in bundle.vector.search(query_vec, top_k=depth) if authorized(nid)
-    ]
-    lex = [
-        (nid, s) for nid, s in bundle.bm25.search(query_text, top_k=depth) if authorized(nid)
-    ]
-    if dedupe_channels:
-        dense = dedupe_pairs(dense)
-        lex = dedupe_pairs(lex)
+    # Аудит 08.10: группы отрезают неавторизованных ПОСЛЕ отбора каналов -
+    # узкая группа получала меньше top_k, хотя ниже в каналах были её документы.
+    # Глубина каналов удваивается, пока авторизованных кандидатов меньше пула
+    # (или не достигнут кап) - на открытых группах цикл сходится с первой итерации.
+    depth_max = max(depth, 250, top_k * 25)
+    while True:
+        dense = [
+            (nid, s) for nid, s in bundle.vector.search(query_vec, top_k=depth)
+            if authorized(nid)
+        ]
+        lex = [
+            (nid, s) for nid, s in bundle.bm25.search(query_text, top_k=depth)
+            if authorized(nid)
+        ]
+        if dedupe_channels:
+            dense = dedupe_pairs(dense)
+            lex = dedupe_pairs(lex)
 
-    rrf: dict[str, float] = {}
-    ranks: dict[str, dict] = {}
-    for rank, (nid, _) in enumerate(dense, start=1):
-        rrf[nid] = rrf.get(nid, 0.0) + weights[0] / (rrf_k + rank)
-        ranks.setdefault(nid, {})["dense_rank"] = rank
-    for rank, (nid, _) in enumerate(lex, start=1):
-        rrf[nid] = rrf.get(nid, 0.0) + weights[1] / (rrf_k + rank)
-        ranks.setdefault(nid, {})["bm25_rank"] = rank
+        rrf: dict[str, float] = {}
+        ranks: dict[str, dict] = {}
+        for rank, (nid, _) in enumerate(dense, start=1):
+            rrf[nid] = rrf.get(nid, 0.0) + weights[0] / (rrf_k + rank)
+            ranks.setdefault(nid, {})["dense_rank"] = rank
+        for rank, (nid, _) in enumerate(lex, start=1):
+            rrf[nid] = rrf.get(nid, 0.0) + weights[1] / (rrf_k + rank)
+            ranks.setdefault(nid, {})["bm25_rank"] = rank
 
-    # K12: identifier-буст - вопрос называет акт («согласно НК РФ», «по ГК РФ»):
-    # узлы этого документа получают бонус поверх RRF (только кандидаты каналов,
-    # authorization уже применён; документ матчится подстрокой названия).
-    rrf_base = dict(rrf)  # ревью K12 P1: органические скоры до буста - на них
-    if legal_boost > 0.0:  # считаются confidence и дельта конфликтов, иначе
-        from ..policy.identifiers import _LEGAL_CODES_MAP, extract_legal_refs  # буст
-        # (= потолку нормировки) обнулял abstain-гейт «согласно НК РФ»
+        # K12: identifier-буст - вопрос называет акт («согласно НК РФ», «по ГК РФ»):
+        # узлы этого документа получают бонус поверх RRF (только кандидаты каналов,
+        # authorization уже применён; документ матчится подстрокой названия).
+        rrf_base = dict(rrf)  # ревью K12 P1: органические скоры до буста - на них
+        if legal_boost > 0.0:  # считаются confidence и дельта конфликтов, иначе
+            from ..policy.identifiers import _LEGAL_CODES_MAP, extract_legal_refs  # буст
+            # (= потолку нормировки) обнулял abstain-гейт «согласно НК РФ»
 
-        refs = extract_legal_refs(query_text)
-        if refs:
-            bonus = legal_boost / (rrf_k + 1.0)
-            needles = [_LEGAL_CODES_MAP[r] for r in refs]
-            for nid in rrf:
-                meta = bundle.node_meta.get(nid)
-                if not meta:
-                    continue
-                title = " ".join(str(meta.get("title", "")).lower().replace("ё", "е").split())
-                if any(n in title for n in needles):
-                    rrf[nid] += bonus
+            refs = extract_legal_refs(query_text)
+            if refs:
+                bonus = legal_boost / (rrf_k + 1.0)
+                needles = [_LEGAL_CODES_MAP[r] for r in refs]
+                for nid in rrf:
+                    meta = bundle.node_meta.get(nid)
+                    if not meta:
+                        continue
+                    title = " ".join(str(meta.get("title", "")).lower().replace("ё", "е").split())
+                    if any(n in title for n in needles):
+                        rrf[nid] += bonus
 
-    ordered = sorted(rrf.items(), key=lambda x: -x[1])
+        ordered = sorted(rrf.items(), key=lambda x: -x[1])
+        if depth >= depth_max:
+            break
+        survivors = 0
+        for nid, _ in ordered:
+            meta = bundle.node_meta.get(nid)
+            if not meta:
+                continue
+            if filter_junk and is_junk_node(meta.get("text", "")):
+                continue
+            survivors += 1
+            if survivors >= pool_size:
+                break
+        if survivors >= pool_size:
+            break
+        depth = min(depth * 2, depth_max)
     evidence: list[Evidence] = []
     for nid, score in ordered:
         # без реранка - прежнее усечение top_k; с реранком пул шире (25), усечёт

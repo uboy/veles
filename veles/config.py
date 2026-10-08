@@ -5,6 +5,29 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+
+def _load_dotenv() -> None:
+    """Подхватить .env из текущего каталога (если есть) ДО чтения настроек.
+
+    Пользователь копирует config.example.env в .env, подставляет адрес
+    языковой модели - и запускает; отдельного экспорта переменных не нужно.
+    Существующие переменные окружения .env не перекрывает."""
+    env_file = Path.cwd() / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = value
+
+
+_load_dotenv()
+
 # Корень корпуса источников (только копии исходников, без производных данных).
 # Без env - ~/veles-data/corpus (общий корень данных veles); машинных путей в коде нет.
 CORPUS_ROOT = Path(

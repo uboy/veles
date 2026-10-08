@@ -232,8 +232,18 @@ async def upload_document(
         )
 
     # ранний гейт размера: заголовок есть почти всегда (клиенты ставят его
-    # сами); chunked без Content-Length проходит мимо - см. остаточный риск
+    # сами). Аудит 08.10: chunked без Content-Length раньше проходил мимо капа
+    # и буферизовался целиком - теперь такой запрос отклоняется до чтения
+    # тела (все наши клиенты - curl, веб-интерфейс, мост - ставят Content-Length)
     declared = (request.headers.get("content-length") or "").strip()
+    transfer = (request.headers.get("transfer-encoding") or "").lower()
+    if not declared.isdigit() and ("chunked" in transfer or not declared):
+        raise HTTPException(
+            status_code=411,
+            detail="требуется заголовок Content-Length: загрузка без указания "
+                "размера (chunked) не поддерживается - кап размера и квота "
+                "проверяются до чтения тела",
+        )
     directory = user_dir(ident.user_id)
     if declared.isdigit():
         length = int(declared)

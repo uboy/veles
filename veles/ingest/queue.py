@@ -38,6 +38,83 @@ from pathlib import Path
 import numpy as np
 
 from ..canonical.model import CanonicalDocument
+
+
+# --- Аудит 08.10: изоляция разбора в отдельном процессе с таймаутом -----------
+# Зависший парс (патологический PDF) раньше навсегда занимал единственный
+# воркер - очередь вставала мёртво. Разбор уезжает в дочерний процесс: не
+# уложился - процесс снимается, джоб честно падает, очередь продолжается.
+
+
+class IsolatedTimeout(RuntimeError):
+    """Разбор в дочернем процессе не уложился в таймаут."""
+
+
+def parse_timeout_s() -> int:
+    """Таймаут разбора одной задачи, с (VELES_QUEUE_PARSE_TIMEOUT_S; 0 = без
+    таймаута - прежнее поведение). Читается на вызов - тесты подменяют env."""
+    raw = os.environ.get("VELES_QUEUE_PARSE_TIMEOUT_S", "").strip()
+    try:
+        return int(raw) if raw else 600
+    except ValueError:
+        return 600
+
+
+def _isolated_child(fn, args: tuple, conn) -> None:
+    """Дочерний процесс: выполнить fn(*args), результат/исключение - в трубу."""
+    try:
+        conn.send(fn(*args))
+    except BaseException as e:  # noqa: BLE001 - исключение уезжает родителю
+        try:
+            conn.send(e)
+        except Exception:  # noqa: BLE001 - непосылаемое исключение = таймаут родителя
+            pass
+    finally:
+        conn.close()
+
+
+def _run_isolated(fn, args: tuple, timeout_s: float):
+    """fn(*args) в отдельном процессе; не уложился - процесс снимается,
+    IsolatedTimeout. fn обязана быть функцией уровня модуля (spawn на Windows
+    передаёт её по имени), аргументы - пиклируемые."""
+    import multiprocessing
+
+    parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
+    proc = multiprocessing.Process(
+        target=_isolated_child, args=(fn, args, child_conn), daemon=True
+    )
+    try:
+        proc.start()
+    except OSError as e:  # noqa: BLE001 - изоляция недоступна: прежнее поведение
+        logger.warning("изоляция разбора недоступна (%s) - парс в своём процессе", e)
+        return fn(*args)
+    child_conn.close()
+    proc.join(timeout_s)
+    if proc.is_alive():
+        proc.kill()
+        proc.join()
+        raise IsolatedTimeout(
+            f"разбор не уложился в {int(timeout_s)}с "
+            "(VELES_QUEUE_PARSE_TIMEOUT_S) - процесс снят"
+        )
+    try:
+        result = parent_conn.recv()
+    except EOFError as e:
+        raise IsolatedTimeout("дочерний процесс разбора умер без результата") from e
+    if isinstance(result, BaseException):
+        raise result
+    return result
+
+
+def parse_document_file(path: Path, corpus_root: Path, ext: str) -> CanonicalDocument:
+    """L0-файл -> CanonicalDocument (уровень модуля: уезжает в дочерний процесс)."""
+    if ext == ".pdf":
+        from .docling_parser import DoclingParserAdapter
+
+        return DoclingParserAdapter().parse_file(path, corpus_root=corpus_root)
+    from .txt_md import TxtMdParserAdapter
+
+    return TxtMdParserAdapter().parse_file(path, corpus_root=corpus_root)
 from ..canonical.store import ingest_document
 from ..config import DEFAULT_ACCESS_GROUPS
 from ..indexing.indexer import INDEX_LOCK, is_lost_force
@@ -569,18 +646,21 @@ class IngestQueue:
         self._append_ledger(job)
 
     def _parse(self, job: Job) -> CanonicalDocument:
-        """L0-файл -> CanonicalDocument существующими парсер-адаптерами."""
+        """L0-файл -> CanonicalDocument существующими парсер-адаптерами.
+
+        Аудит 08.10: разбор выполняется в ОТДЕЛЬНОМ процессе с таймаутом
+        (VELES_QUEUE_PARSE_TIMEOUT_S, 0 = без таймаута - прежнее поведение).
+        Зависший парс (патологический PDF) раньше навсегда блокировал очередь -
+        теперь процесс снимается, джоб честно падает, воркер берёт следующий."""
         path = uploads_root() / user_dir(job.user_id) / job.filename
-        ext = path.suffix.lower()
-        if ext == ".pdf":
-            from .docling_parser import DoclingParserAdapter
-
-            doc = DoclingParserAdapter().parse_file(path, corpus_root=uploads_root())
-        else:
-            from .txt_md import TxtMdParserAdapter
-
-            doc = TxtMdParserAdapter().parse_file(path, corpus_root=uploads_root())
-        return doc
+        timeout_s = parse_timeout_s()
+        fn_args = (path, uploads_root(), path.suffix.lower())
+        if timeout_s <= 0:
+            return parse_document_file(*fn_args)
+        try:
+            return _run_isolated(parse_document_file, fn_args, timeout_s)
+        except IsolatedTimeout as e:
+            raise TimeoutError(str(e)) from e
 
     def _discard_l0(self, job: Job) -> None:
         """P2 ревью K4: упавший разбор не должен навсегда съедать квоту -
