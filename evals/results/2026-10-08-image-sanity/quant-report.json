@@ -1,0 +1,16 @@
+{
+ "model": "jinaai/jina-clip-v2",
+ "quantization": "torch-dynamic-int8-linear",
+ "load_fp32_seconds": 3.0,
+ "quantize_seconds": 0.1,
+ "steady_rss_mb": 2976,
+ "peak_rss_mb": 4423,
+ "query_latency_ms": 548,
+ "image_encode_seconds": 116.0,
+ "images": 30,
+ "queries": 10,
+ "hit_top3": 9,
+ "hit_top3_rate": 0.9,
+ "hit_top1": 8,
+ "hit_top1_rate": 0.8
+}
