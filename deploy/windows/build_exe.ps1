@@ -1,4 +1,4 @@
-# build_exe.ps1 - сборка veles.exe для Windows (один каталог + zip).
+﻿# build_exe.ps1 - сборка veles.exe для Windows (один каталог + zip).
 # Результат: dist\veles\veles.exe (запуск без аргументов = сервер на 8400),
 # упакованный в dist\veles-windows.zip вместе с config.example.env и доками.
 # Требования: Python 3.11+ в PATH; сборка выполняется на Windows.
@@ -18,6 +18,8 @@ Write-Host "[exe] PyInstaller"
   --hidden-import sentence_transformers `
   --hidden-import torch `
   --hidden-import transformers `
+  --paths "$RepoDir" `
+  --collect-submodules veles `
   --collect-all sentence_transformers `
   --collect-all transformers `
   --collect-all tokenizers `
