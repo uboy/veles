@@ -1,0 +1,9 @@
+[snap] узлов в индексе: 281395
+`torch_dtype` is deprecated! Use `dtype` instead!
+[model] Qwen/Qwen3-Embedding-0.6B загружена за 4с (max_seq_length=512)
+[encode] 281395 узлов за 2179с
+[eval] 100/470
+[eval] 200/470
+[eval] 300/470
+[eval] 400/470
+ИТОГ[qwen3]: n=470 top1=249/470 (53.0%) page@5=400/470 (85.1%)

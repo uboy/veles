@@ -1,0 +1,22 @@
+nodes=281395
+=== dense топ-12 (без фильтров) ===
+0.7609 owner/Arkoala presentations.md
+0.6516 owner/Arkoala build and run an application.md
+0.6277 owner/C-API Overview.md
+0.6262 owner/Changes in Previewer.md
+0.6076 owner/C-API Overview.md
+0.6064 owner/HLD - koala_ui Integration in OHOS.md
+0.5965 owner/Previewer Standalone Mode build and run.md
+0.5953 owner/Previewer Standalone Mode build and run.md
+0.5895 owner/Анализ интеграции сгенерированных end-to-end тестов в 
+0.5888 owner/Sync Build.md
+0.5856 owner/Built-in Previewer.md
+0.5787 owner/Built-in Previewer.md
+лучший косинус целевого документа: 0.7609, ранг лучшего узла документа: 0
+=== гибрид топ-5 ===
+rrf=0.0164 dense_rank=None bm25_rank=1 docs/Data1_1_1879_index.pdf
+rrf=0.0161 dense_rank=None bm25_rank=2 docs/Data1_1_1904_index.pdf
+rrf=0.0159 dense_rank=None bm25_rank=3 docs/Data1_1_1904_index.pdf
+rrf=0.0156 dense_rank=None bm25_rank=4 lectures/Управление производством/02_2026-09-11_Расчет_загру
+rrf=0.0154 dense_rank=None bm25_rank=5 docs/Data1_2_2075_index.pdf
+целевой в гибриде: False
