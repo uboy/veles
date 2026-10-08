@@ -446,6 +446,30 @@ def test_render_appends_asset_images(mod) -> None:
     assert "![изображение](http://veles:8400/v1/asset/docs/%D0%BB%D0%B5%D0%BA%D1%86%D0%B8%D1%8F.pdf/page-3.png?token=owner-token)" in out
 
 
+def test_render_appends_channel_images(mod) -> None:
+    """Поиск по изображениям: result["images"] рендерятся как картинки с
+    подписью и страницей; актив, уже показанный из цитат, не дублируется."""
+    result = {
+        "decision": "answer",
+        "answer": "Ответ.",
+        "citations": [
+            {"n": 1, "title": "Лекция 04", "document_id": "docs/лекция.pdf",
+             "source_id": "лекция.pdf", "node_version_id": "nv1",
+             "asset": "page-3.png", "lines": [10, 20]},
+        ],
+        "images": [
+            {"kind": "image", "document_id": "docs/лекция.pdf",
+             "asset": "page-3.png", "page": 3, "title": "Лекция 04"},
+            {"kind": "image", "document_id": "docs/книга.pdf",
+             "asset": "pic-002.png", "page": 42, "title": "Книга"},
+        ],
+    }
+    out = mod._render_answer(result, "http://veles:8400", "owner-token")
+    assert out.count("![изображение]") == 2
+    assert "docs/%D0%BA%D0%BD%D0%B8%D0%B3%D0%B0.pdf/pic-002.png" in out
+    assert "«Книга», стр. 42" in out
+
+
 def test_ready_links_from_facade_win(pipe) -> None:
     """K20 позитив: фасад прислал готовую source_url (подписанную exp+sig, без
     токена, как при VELES_LINK_SECRET) - функция берёт её как есть, самодельную

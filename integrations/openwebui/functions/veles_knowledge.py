@@ -291,9 +291,26 @@ def _render_answer(
         )
         blocks.append(entry)
     # изображения-цитаты (PDF) - как в render_chat_content фасада
+    shown_assets = {
+        (c.get("document_id"), c.get("asset"))
+        for c in citations
+        if c.get("asset") and c.get("document_id")
+    }
     for c in citations:
         if c.get("asset") and c.get("document_id"):
             blocks.append(f"![изображение]({_asset_link(public_url, token, c)})")
+    # картинки отдельного канала (поиск по изображениям): после цитатных,
+    # дубли активов не повторяем; подпись - название документа и страница
+    for im in result.get("images") or []:
+        pair = (im.get("document_id"), im.get("asset"))
+        if not all(pair) or pair in shown_assets:
+            continue
+        shown_assets.add(pair)
+        label = str(im.get("title") or im["document_id"])[:80]
+        page = f", стр. {im['page']}" if im.get("page") else ""
+        blocks.append(
+            f"![изображение]({_asset_link(public_url, token, im)}) «{label}»{page}"
+        )
     if decision == "warn_conflict":
         conflicts = (result.get("diagnostics") or {}).get("conflicts") or []
         if conflicts:
