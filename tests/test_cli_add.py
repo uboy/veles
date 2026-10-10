@@ -5,7 +5,8 @@
 (load_index с overlay); L0 лежит в uploads/owner/<имя> под тем же
 document_id, что у фасада (`veles delete` снимает такой документ целиком);
 повторный add того же содержимого - честный «без изменений»; негативы -
-нет файла, не тот формат, нет индекса (причём негатив не оставляет L0).
+нет файла, не тот формат (L0 и канон не создаются); на свежей установке без
+индекса add сам создаёт пустой индекс и документ попадает в поиск.
 Эмбеддер - детерминированный hashing (канон: тесты без загрузки моделей),
 dim = EMBED_DIM, чтобы overlay докатывался через load_index.
 """
@@ -136,17 +137,23 @@ def test_add_same_content_is_unchanged(kb_env, tmp_path):
     assert run_add(src, title=DOC_TITLE) == 0  # вторая загрузка - no-op по sha256
 
 
-def test_add_without_index_fails_clean(kb_env, tmp_path, monkeypatch):
-    # индекс исчез (каталог пуст) - отказ ДО копирования L0
+def test_add_bootstraps_empty_index(kb_env, tmp_path, monkeypatch):
+    # свежая установка: индекса нет - add сам создаёт пустой индекс,
+    # документ кладёт в поиск, L0 не теряется
     import veles.config as config
 
-    empty = tmp_path / "empty-index"
-    empty.mkdir()
-    monkeypatch.setattr(config, "INDEX_DIR", empty)
+    fresh = tmp_path / "fresh-index"
+    fresh.mkdir()
+    monkeypatch.setattr(config, "INDEX_DIR", fresh)
     src = tmp_path / DOC_NAME
     src.write_text(DOC_TEXT, encoding="utf-8", newline="\n")
-    assert run_add(src) == 1
-    assert not (uploads_root() / user_dir("") / DOC_NAME).exists()
+    assert run_add(src) == 0
+    assert (fresh / "meta.json").is_file()  # индекс создан
+    # документ реально ищется в свежесозданном индексе
+    bundle = load_index(fresh)
+    qvec = HashingEmbedder().embed_query(DOC_QUERY)
+    texts = [e.text for e in hybrid_search(bundle, qvec, DOC_QUERY, top_k=5)]
+    assert any(DOC_MARK in t for t in texts), texts
 
 
 def test_add_rejects_pdf_and_missing_file(kb_env, tmp_path):

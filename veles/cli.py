@@ -162,6 +162,8 @@ def cmd_add(args: argparse.Namespace) -> int:
     ищется сразу и переживает рестарт без пересборки). L0 кладётся в
     uploads/owner/<имя> - та же физика, что у фасада, поэтому `veles delete`
     снимает такой документ целиком. Синхронно: вернулся - можно спрашивать.
+    На свежей установке (индекса ещё нет) сам создаёт пустой индекс - первый
+    документ добавляется одной командой, без `veles index` и `ingest`.
     """
     import os
     import shutil
@@ -177,9 +179,17 @@ def cmd_add(args: argparse.Namespace) -> int:
     if src.suffix.lower() not in (".txt", ".md"):
         print("поддерживаются форматы txt и md (pdf - через фасад: POST /v1/documents)")
         return 1
+    embedder = None
     if not (config.INDEX_DIR / "meta.json").exists():
-        print("индекс не собран - сначала `veles index` (или install.sh --demo)")
-        return 1
+        # первый документ на свежей установке: создаём пустой индекс (канон пуст),
+        # дальше add работает инкрементально
+        print("первый документ: создаю пустой индекс поиска")
+        embedder = build_embedder()
+        store = make_store()
+        empty_bundle = build_index(embedder, store)
+        empty_bundle.save(
+            config.INDEX_DIR, embed_meta={"model": EMBED_MODEL, "backend": store.name}
+        )
 
     directory = user_dir("")  # static-режим: владелец, как у фасада
     filename = safe_filename(src.name)
@@ -211,7 +221,9 @@ def cmd_add(args: argparse.Namespace) -> int:
         return 0
 
     bundle = load_index(config.INDEX_DIR)
-    delta = upsert_document(bundle, doc, outcome, build_embedder())
+    if embedder is None:
+        embedder = build_embedder()
+    delta = upsert_document(bundle, doc, outcome, embedder)
     if delta is not None:
         append_overlay(
             config.INDEX_DIR, delta.nodes, delta.patches,

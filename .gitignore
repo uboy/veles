@@ -8,3 +8,4 @@ COMMIT.txt
 build/
 dist/
 veles.spec
+build-venv/
