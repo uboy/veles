@@ -225,9 +225,13 @@ LOST_FORCE_PLATE = "⚠ Норма утратила силу - "
 def _web_source_link(link_map: dict, citation: dict) -> str | None:
     """Веб-ссылка на источник по маппингу valves (репозиторий -> веб-версия
     вики). Ключ маппинга - подстрока document_id или названия документа,
-    значение - базовый URL веб-версии; страница = название документа пробелы
-    -> дефисы (слаг страниц gitee-вики). Нет совпадения - None, работает
-    прежняя ссылка на локальный просмотр."""
+    значение - базовый URL веб-версии; страница = название документа как есть
+    со стандартным URL-кодированием. gitee-вики не слагифицирует имена:
+    открывается сырое имя страницы (пробел = %20, амперсанд = %26), а замены
+    символов дают несуществующие адреса (ревью 10.10, живой рендер на asrock:
+    wikis/Sync&Build/Sync%26Build открывается, wikis/Sync-Build/Sync-Build -
+    нет; HTTP-код не показатель - SPA всегда 200). Нет совпадения - None,
+    работает прежняя ссылка на локальный просмотр."""
     if not link_map:
         return None
     doc = str(citation.get("document_id") or "")
@@ -235,12 +239,9 @@ def _web_source_link(link_map: dict, citation: dict) -> str | None:
     for key, base in link_map.items():
         if key and isinstance(base, str) and base.startswith(("http://", "https://")) \
                 and (key in doc or (title and key in title)):
-            # слаг страниц gitee-вики: амперсанд превращается в дефис
-            # (аудит 08.10: %26 в адресе даёт пустую заглушку gitee вместо страницы)
-            slug = re.sub(r"\s+", "-", title.replace("&", "-")) if title else ""
-            if not slug:
+            if not title:
                 return None
-            return base.rstrip("/") + "/" + quote(slug, safe="-._~()")
+            return base.rstrip("/") + "/" + quote(title, safe="-._~()")
     return None
 
 

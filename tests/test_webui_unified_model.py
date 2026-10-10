@@ -268,16 +268,44 @@ def test_question_admin_no_act_as(pipe) -> None:
 
 def test_source_link_map_rewrites_to_web_version(pipe) -> None:
     """Valves source_link_map: совпавший источник ссылается на веб-версию
-    (вики репозитория), слаг = название документа пробелы -> дефисы."""
+    (вики репозитория), адрес = название документа со стандартным
+    URL-кодированием (пробел -> %20)."""
     http = HttpMock([("POST", "/v1/knowledge/query", 200, QUERY_RESULT)])
     p = pipe(http)
     p.valves.source_link_map = json.dumps(
         {"Регламент": "https://wiki.example.org/"})
     out = p.pipe(BODY_QUESTION, USER)
-    slug = quote("Регламент-отпусков", safe="-._~()")
-    web = "https://wiki.example.org/" + slug
+    web = "https://wiki.example.org/" + quote("Регламент отпусков", safe="-._~()")
     assert web in out
     assert "/v1/source/" not in out
+
+
+def test_source_link_map_gitee_page_names_not_slugified(pipe) -> None:
+    """Ревью 10.10: gitee-вики не слагифицирует имена страниц - открывается
+    сырое название (пробел = %20, амперсанд = %26); прежние замены символов
+    (пробелы/амперсанд -> дефисы) строили несуществующие адреса
+    (wikis/Sync-Build/Sync-Build не открывается, wikis/Sync&Build/Sync%26Build
+    открывается - живой рендер на asrock)."""
+    result = {
+        "request_id": "req-2",
+        "decision": "answer",
+        "answer": "Сборка и синхронизация [1].",
+        "citations": [{
+            "n": 1, "title": "Sync&Build", "source_id": "sync.md",
+            "lines": None, "document_id": "owner/Sync Build.md",
+            "node_version_id": "nv-9", "revision_id": "r1",
+        }],
+        "diagnostics": {"confidence": 0.9, "reason": "", "llm_used": True},
+    }
+    http = HttpMock([("POST", "/v1/knowledge/query", 200, result)])
+    p = pipe(http)
+    p.valves.source_link_map = json.dumps(
+        {"Sync&Build": "https://gitee.com/mazurdenis/open-harmony/wikis/Sync&Build"})
+    out = p.pipe(BODY_QUESTION, USER)
+    web = ("https://gitee.com/mazurdenis/open-harmony/wikis/Sync&Build/"
+           + quote("Sync&Build", safe="-._~()"))
+    assert web in out
+    assert "Sync-Build" not in out
 
 
 def test_source_link_map_no_match_keeps_local(pipe) -> None:
