@@ -243,3 +243,52 @@ def test_title_boost_zero_keeps_order():
                        "how to build and sync openharmony", top_k=3,
                        title_boost=0.0)
     assert all(e.citations[0].document_id == "docs/setup.md" for e in ev)
+
+
+def test_title_boost_default_comes_from_config(monkeypatch):
+    import numpy as np
+
+    monkeypatch.setattr("veles.config.TITLE_BOOST", 1.0)
+    ev = hybrid_search(_titled_bundle(), np.zeros(4, dtype=np.float32),
+                       "how to build and sync openharmony", top_k=5,
+                       title_boost=None)
+    assert any(e.citations[0].document_id == "docs/sync-build.md" for e in ev), \
+        [e.citations[0].document_id for e in ev]
+
+    monkeypatch.setattr("veles.config.TITLE_BOOST", 0.0)
+    ev = hybrid_search(_titled_bundle(), np.zeros(4, dtype=np.float32),
+                       "how to build and sync openharmony", top_k=3,
+                       title_boost=None)
+    assert all(e.citations[0].document_id == "docs/setup.md" for e in ev)
+
+
+def test_title_boost_normalizes_yo_in_titles():
+    import numpy as np
+
+    class OrderedVector:
+        def search(self, q, top_k=10):
+            ids = [f"s{i}" for i in range(10)] + [f"b{i}" for i in range(5)]
+            return [(i, 1.0 / (n + 1)) for n, i in enumerate(ids[:top_k])]
+
+    meta = {}
+    for i in range(10):
+        meta[f"s{i}"] = {
+            "text": "risks and budget of the city program",
+            "access_groups": ["personal"], "title": "Setup Guide",
+            "document_id": "docs/setup.md", "heading_path": [],
+            "provenance": {"adapter": "t", "source_id": "setup.md", "lines": None},
+        }
+    for i in range(5):
+        meta[f"b{i}"] = {
+            "text": "risks and budget of the city program",
+            "access_groups": ["personal"], "title": "Объём проекта",
+            "document_id": "docs/volume.md", "heading_path": [],
+            "provenance": {"adapter": "t", "source_id": "volume.md", "lines": None},
+        }
+    bundle = IndexBundle(vector=OrderedVector(), bm25=OrderedVector(), node_meta=meta)
+    # вопрос набран через «е», название - через «ё»: без нормализации
+    # пересечение {проекта} даёт 1/3 < 0.5 и буст не срабатывает вовсе
+    ev = hybrid_search(bundle, np.zeros(4, dtype=np.float32),
+                       "объем проекта и риски", top_k=5, title_boost=1.0)
+    assert any(e.citations[0].document_id == "docs/volume.md" for e in ev), \
+        [e.citations[0].document_id for e in ev]

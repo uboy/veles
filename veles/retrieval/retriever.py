@@ -264,8 +264,11 @@ def hybrid_search(
         # теме. Покрытие >= половины значимых слов вопроса -> бонус, пропорциональный
         # покрытию (стоп-слова вопроса и короткие токены не считаются).
         if title_boost > 0.0 and len(rrf) > 1:
+            # ё нормализуется к е с обеих сторон (как в legal-бусте выше):
+            # иначе «объем» вопроса не совпадёт с «Объём» названия
             q_words = {
-                w for w in re.findall(r"[a-zа-яё0-9]{3,}", query_text.lower())
+                w for w in re.findall(
+                    r"[a-zа-яё0-9]{3,}", query_text.lower().replace("ё", "е"))
                 if w not in _QUERY_STOPWORDS
             }
             if len(q_words) >= 2:
@@ -274,7 +277,8 @@ def hybrid_search(
                     if not meta:
                         continue
                     t_words = set(re.findall(
-                        r"[a-zа-яё0-9]{3,}", str(meta.get("title", "")).lower()))
+                        r"[a-zа-яё0-9]{3,}",
+                        str(meta.get("title") or "").lower().replace("ё", "е")))
                     if not t_words:
                         continue
                     coverage = len(q_words & t_words) / len(q_words)
