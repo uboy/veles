@@ -256,8 +256,11 @@ async function showJob(jobId) {
   box.textContent = "загружаю задачу...";
   try {
     const j = await api("/v1/documents/jobs/" + encodeURIComponent(jobId));
+    // В значениях ячеек - ТОЛЬКО esc(), без исключений: title приходит из
+    // формы загрузки без санитизации (documents.py) и может начинаться с
+    // "<span" - сырая вставка «красивого бейджа» была бы HTML-инъекцией.
+    // Бейдж статуса - отдельная строка таблицы из esc-безопасных кусков.
     const rows = [
-      ["статус", statusBadge(j.status)],
       ["файл", j.filename], ["название", j.title], ["документ", j.document_id],
       ["пользователь", j.user_id], ["размер, байт", j.size_bytes],
       ["группы", (j.groups || []).join(", ")], ["действие", j.action],
@@ -266,10 +269,9 @@ async function showJob(jobId) {
       ["завершена", j.finished_at], ["ошибка", j.error],
     ];
     box.innerHTML = "<h3>Задача <code>" + esc(j.job_id) + "</code></h3><table><tbody>" +
-      rows.map((kv) => "<tr><th>" + esc(kv[0]) + "</th><td>" +
-        (typeof kv[1] === "string" && kv[1].startsWith("<span")
-          ? kv[1] // бейдж статуса собран из esc()-безопасных кусков выше
-          : esc(dash(kv[1]))) + "</td></tr>").join("") +
+      "<tr><th>статус</th><td>" + statusBadge(j.status) + "</td></tr>" +
+      rows.map((kv) => "<tr><th>" + esc(kv[0]) + "</th><td>" + esc(dash(kv[1])) +
+        "</td></tr>").join("") +
       "</tbody></table>";
   } catch (e) {
     box.textContent = "не удалось получить задачу: " + errText(e);
@@ -313,6 +315,20 @@ async function loadGroups() {
 
 // ---- Вопрос ---------------------------------------------------------------
 
+// Ссылка источника безопасна для панели только подписанная (exp+sig):
+// static-режим без VELES_LINK_SECRET строит source_url с token=<bearer> в
+// query (attach_citation_links, mint_token_links=static) - клик кладёт токен
+// в историю браузера и логи /v1/source, вопреки обещанию панели «токен в URL
+// не используется». Ссылки с token= панель не рендерит - источник текстом.
+function safeSourceUrl(u) {
+  if (!u) return "";
+  try {
+    return new URL(u, location.origin).searchParams.has("token") ? "" : u;
+  } catch (e) {
+    return "";
+  }
+}
+
 function renderAsk(res) {
   const out = $("askout");
   const badge = res.decision === "answer"
@@ -326,15 +342,23 @@ function renderAsk(res) {
   }
   const cits = res.citations || [];
   if (cits.length) {
+    let suppressed = 0;
     html += "<h3>Цитаты</h3><ol>" + cits.map((c) => {
       const where = c.lines && c.lines.length >= 2
         ? ", строки " + c.lines[0] + "-" + c.lines[1] : "";
       const label = "[" + esc(c.n) + "] «" + esc(dash(c.title)) + "» " +
         esc(dash(c.source_id)) + esc(where);
-      return "<li>" + (c.source_url
-        ? '<a href="' + esc(c.source_url) + '" target="_blank" rel="noopener">' + label + "</a>"
+      const url = safeSourceUrl(c.source_url);
+      if (c.source_url && !url) suppressed += 1;
+      return "<li>" + (url
+        ? '<a href="' + esc(url) + '" target="_blank" rel="noopener">' + label + "</a>"
         : label) + "</li>";
     }).join("") + "</ol>";
+    if (suppressed) {
+      html += "<p><small>Ссылки на источники скрыты: фасад строит их с токеном " +
+        "в URL (static-режим без VELES_LINK_SECRET). Задайте VELES_LINK_SECRET - " +
+        "панель будет открывать источники по подписанным ссылкам.</small></p>";
+    }
   }
   const diag = res.diagnostics || {};
   const bits = ["уверенность: " + dash(diag.confidence),
