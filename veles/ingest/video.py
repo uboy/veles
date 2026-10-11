@@ -28,8 +28,8 @@ from . import voxfusion
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".mov", ".webm", ".m4v", ".avi"}
 PROFILE = "video:0.1"
 
-_MAX_NODE_CHARS = 1200  # верхняя граница узла - как у txt_md (~1200)
-_MIN_NODE_CHARS = 700   # к сегменту короче - досыпаем следующий, если влезает
+_MAX_NODE_CHARS_DEFAULT = 1200  # верхняя граница узла - как у txt_md (~1200)
+_MIN_NODE_CHARS = 700           # к сегменту короче - досыпаем следующий, если влезает
 
 
 def _env_float(name: str, default: float) -> float:
@@ -37,6 +37,10 @@ def _env_float(name: str, default: float) -> float:
         return float(os.environ.get(name, "") or default)
     except ValueError:
         return default
+
+
+def _max_node_chars() -> int:
+    return int(_env_float("VELES_VIDEO_MAX_NODE_CHARS", _MAX_NODE_CHARS_DEFAULT))
 
 
 def _need_ffmpeg() -> str:
@@ -114,21 +118,23 @@ def _extract_frames(exe: str, video: Path, assets_dir: Path) -> dict[str, str]:
 
 
 def merge_segments(segments: list[dict]) -> list[tuple[float, float, str]]:
-    """Сегменты речи -> узлы: копим, пока не выйдем за _MAX_NODE_CHARS;
-    короткий хвост досыпается к предыдущему, если тот короче _MIN_NODE_CHARS.
+    """Сегменты речи -> узлы: копим, пока не выйдем за максимум узла
+    (VELES_VIDEO_MAX_NODE_CHARS, по умолчанию 1200); короткий хвост досыпается
+    к предыдущему, если тот короче _MIN_NODE_CHARS.
     Возвращает (t_start, t_end, текст) слитых узлов."""
+    cap = _max_node_chars()
     merged: list[tuple[float, float, str]] = []
     for seg in segments:
         text = (seg.get("text") or "").strip()
         if not text:
             continue
-        if merged and len(merged[-1][2]) + len(text) + 1 <= _MAX_NODE_CHARS:
+        if merged and len(merged[-1][2]) + len(text) + 1 <= cap:
             s, e, t = merged[-1]
             merged[-1] = (s, float(seg["end"]), f"{t} {text}")
             continue
         merged.append((float(seg["start"]), float(seg["end"]), text))
     # хвост, короче минимума, приклеиваем к предыдущему узлу (таймкод растёт)
-    if len(merged) >= 2 and len(merged[-1][2]) < _MIN_NODE_CHARS:
+    if len(merged) >= 2 and len(merged[-1][2]) < _MIN_NODE_CHARS and cap >= _MIN_NODE_CHARS:
         s0, e0, t0 = merged[-2]
         s1, e1, t1 = merged[-1]
         merged[-2:] = [(s0, e1, f"{t0} {t1}")]
@@ -171,7 +177,10 @@ class VideoParserAdapter:
 
                 vx_client = httpx.Client(timeout=60.0)
             try:
-                job_id = voxfusion.submit(vx_client, wav)
+                # язык речи видео; по умолчанию русский (основной контур),
+                # переопределяется для иноязычных записей
+                lang = os.environ.get("VELES_VIDEO_TRANSCRIBE_LANG", "ru").strip() or "ru"
+                job_id = voxfusion.submit(vx_client, wav, language=lang)
                 status, segments, info = voxfusion.poll_segments(
                     vx_client, job_id, timeout_s=timeout
                 )
