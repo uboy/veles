@@ -16,10 +16,14 @@ WORKDIR /app
 ARG TORCH_CPU=1
 
 COPY pyproject.toml ./
+# Пин пары st/transformers: резолюция 2026-10-11 подтянула несовместимую
+# связку (упала загрузка индекса: PreTrainedModel не импортируется) -
+# фиксируем проверенный на K11/bm1 комплект последним шагом deps-слоя.
 RUN if [ "$TORCH_CPU" = "1" ]; then \
         pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu; \
     fi && \
-    pip install --no-cache-dir ".[st,faiss,docling]"
+    pip install --no-cache-dir ".[st,faiss,docling]" && \
+    pip install --no-cache-dir "sentence-transformers==6.1.0" "transformers==5.17.0" "tokenizers==0.23.2"
 
 COPY veles ./veles
 
