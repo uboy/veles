@@ -25,6 +25,10 @@ class Provenance(BaseModel):
     page: Optional[int] = None  # PDF
     slide: Optional[int] = None  # PPTX
     sheet: Optional[str] = None  # XLSX
+    # Видео: границы сегмента речи в секундах от начала файла (адаптер video:0.1).
+    # Optional - старые каноны и не-видео узлы читаются как None без миграции.
+    t_start: Optional[float] = None
+    t_end: Optional[float] = None
 
 
 class CanonicalNode(BaseModel):

@@ -27,11 +27,27 @@ class Citation:
     # K18: метка «утратил силу» по тексту узла (node_meta из индекса); ранжирование
     # не меняет и узел не скрывает - только плашка перед цитатой в рендерах
     lost_force: bool = False
+    # Видео: границы сегмента речи в секундах (у не-видео узлов None; poisk-po-video)
+    t_start: float | None = None
+    t_end: float | None = None
 
     def human(self) -> str:
         where = f", строки {self.lines[0]}-{self.lines[1]}" if self.lines else ""
+        if self.t_start is not None:
+            tc = f"{format_timecode(self.t_start)}" + (
+                f"-{format_timecode(self.t_end)}" if self.t_end is not None else ""
+            )
+            where = f"{where}, {tc}" if where else f", {tc}"
         rev = f", ред. {self.revision_id}" if self.revision_id not in ("", "r1") else ""
         return f"«{self.title}» {self.source_id}{rev}{where}"
+
+
+def format_timecode(seconds: float) -> str:
+    """Секунды -> «ЧЧ:ММ:СС» (часы всегда; единый формат цитат и рендеров)."""
+    total = max(0, int(round(seconds)))
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 # K18: единый текст плашки lost_force для рендеров фасада и CLI. В tg_format
@@ -320,6 +336,9 @@ def hybrid_search(
             heading_path=meta["heading_path"],
             source_id=prov["source_id"],
             lines=prov.get("lines"),
+            # Видео: таймкоды из provenance; у старых индексов полей нет - None
+            t_start=prov.get("t_start"),
+            t_end=prov.get("t_end"),
             node_version_id=nid,
             revision_id=meta.get("revision_id", "r1"),
             # K18: .get с дефолтом False - индексы до метки (старый meta.json

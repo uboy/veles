@@ -112,6 +112,10 @@ def parse_document_file(path: Path, corpus_root: Path, ext: str) -> CanonicalDoc
         from .docling_parser import DoclingParserAdapter
 
         return DoclingParserAdapter().parse_file(path, corpus_root=corpus_root)
+    if ext in VIDEO_EXTENSIONS:
+        from .video import VideoParserAdapter
+
+        return VideoParserAdapter().parse_file(path, corpus_root=corpus_root)
     from .txt_md import TxtMdParserAdapter
 
     return TxtMdParserAdapter().parse_file(path, corpus_root=corpus_root)
@@ -119,13 +123,15 @@ from ..canonical.store import ingest_document
 from ..config import DEFAULT_ACCESS_GROUPS
 from ..indexing.indexer import INDEX_LOCK, is_lost_force
 from ..policy.identifiers import extract_identifiers
+from .video import VIDEO_EXTENSIONS
 
 logger = logging.getLogger("veles.ingest.queue")
 
 JOB_STATUSES = ("queued", "running", "done", "failed")
 
-# Поддерживаемые форматы первого шага (бриф K4); pdf - существующим docling-конвейером
-ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf"}
+# Поддерживаемые форматы первого шага (бриф K4); pdf - существующим docling-конвейером;
+# видео - poisk-po-video (расшифровка VoxFusion + кадры ffmpeg)
+ALLOWED_EXTENSIONS = {".txt", ".md", ".pdf", *VIDEO_EXTENSIONS}
 
 _LEDGER_NAME = "ingest-jobs.jsonl"
 

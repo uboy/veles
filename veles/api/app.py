@@ -41,7 +41,7 @@ from ..policy.identity import (
     StaticOwnerResolver,
     validated_user_id,
 )
-from ..retrieval.retriever import hybrid_search, lost_force_prefix
+from ..retrieval.retriever import format_timecode, hybrid_search, lost_force_prefix
 from .documents import router as documents_router  # K4: загрузка документов
 from .groups import router as groups_router  # K7: список групп для загрузки
 from .llm import OpenAICompatibleProvider, llm_config_from_env, request_id
@@ -186,6 +186,9 @@ class VelesPipeline:
                 "title": c.title,
                 "source_id": c.source_id,
                 "lines": c.lines,
+                # Видео: таймкоды сегмента (poisk-po-video); у не-видео - None
+                "t_start": c.t_start,
+                "t_end": c.t_end,
                 "heading_path": c.heading_path,
                 "document_id": c.document_id,
                 "node_version_id": c.node_version_id,
@@ -341,6 +344,12 @@ def render_chat_content(
     blocks = [answer, "", "Источники:"]
     for c in result["citations"]:
         where = f", строки {c['lines'][0]}-{c['lines'][1]}" if c.get("lines") else ""
+        # Видео: таймкод сегмента в цитате (poisk-po-video)
+        if c.get("t_start") is not None:
+            tc = format_timecode(c["t_start"]) + (
+                f"-{format_timecode(c['t_end'])}" if c.get("t_end") is not None else ""
+            )
+            where = f"{where}, {tc}" if where else f", {tc}"
         # K18: перед цитатой lost_force-узла - плашка (ранжирование не менялось,
         # узел не скрыт; research: показывать с явной меткой статуса)
         plate = lost_force_prefix(bool(c.get("lost_force")))
