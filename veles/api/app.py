@@ -796,6 +796,10 @@ def create_app(
         Документы/узлы - по тем же группам идентификации, что поиск (P0 ревью
         K4): чужие загрузки не видны ни в списке, ни в totals.nodes.
         K21: act-as срезает оглавление до личности пользователя - как поиск.
+        Админ-панель (/admin): каждый документ несёт groups - объединение
+        access_groups его видимых узлов из того же снапшота; чужие группы
+        не-админу не раскрываются (в объединение идут только узлы, прошедшие
+        ACL этой личности).
         """
         ident = _identity(request, authorization)
         acting = _acting_read_identity(
@@ -825,15 +829,20 @@ def create_app(
             visible_nodes += 1
             did = m.get("document_id") or "(без документа)"
             d = docs.setdefault(
-                did, {"document_id": did, "title": m.get("title") or did, "nodes": 0, "sections": set()}
+                did, {"document_id": did, "title": m.get("title") or did, "nodes": 0,
+                      "sections": set(), "groups": set()}
             )
             d["nodes"] += 1
             heading_path = m.get("heading_path") or []
             if heading_path:
                 d["sections"].add(heading_path[0])
+            # админ-панель: группы документа - объединение access_groups видимых
+            # узлов; у админа это полный состав, у прочих - только их группы
+            d["groups"].update(m.get("access_groups") or [])
         doc_list = sorted(docs.values(), key=lambda d: (-d["nodes"], d["title"]))
         for d in doc_list:
             d["sections"] = sorted(d["sections"])
+            d["groups"] = sorted(d["groups"])
         return {
             "totals": {
                 "documents": len(doc_list),
@@ -1051,12 +1060,18 @@ def create_app(
         return HTMLResponse(page, headers=headers)
 
     def _static_page_asset(request: Request, token: str, authorization: str,
-                           name: str, media: str) -> Response:
-        ident = _link_identity(request, authorization, token, "upload", "", "", "")
-        if ident is None:
-            ident = _header_identity(request) or _owner_identity()
-        if ident is None:
-            raise HTTPException(status_code=401, detail="unauthorized")
+                           name: str, media: str,
+                           require_auth: bool = True) -> Response:
+        # админ-панель (/admin) отдаёт статику БЕЗ токена (require_auth=False):
+        # страница - shell без секретов, браузер грузит js/css подресурсами без
+        # заголовков; токен из localStorage ходит только в JSON-API. Проверка
+        # имени (traversal отсечён) и CSP - те же, что у /upload.
+        if require_auth:
+            ident = _link_identity(request, authorization, token, "upload", "", "", "")
+            if ident is None:
+                ident = _header_identity(request) or _owner_identity()
+            if ident is None:
+                raise HTTPException(status_code=401, detail="unauthorized")
         if not re.fullmatch(r"[\w.-]+", name):
             raise HTTPException(status_code=400, detail="bad name")
         path = Path(__file__).parent / "static" / name
@@ -1074,6 +1089,33 @@ def create_app(
                           authorization: str = Header(default="")):
         return _static_page_asset(request, token, authorization,
                                   "upload.css", "text/css")
+
+    @app.api_route("/admin", methods=["GET", "HEAD"])
+    def admin_page():
+        """Админ-панель управления бэкендом: обзор, документы (+удаление),
+        задачи очереди, группы, тестовый вопрос, загрузка.
+
+        Страница - shell без секретов, отдаётся БЕЗ токена: токен админа
+        (VELES_API_TOKEN) вводится на странице, живёт в localStorage браузера
+        и ходит только в Authorization JSON-запросов (в URL не попадает -
+        не пишется в логи и историю). Данные вкладок берутся из существующих
+        эндпоинтов (stats/groups/jobs/query/documents); скрипт и стили -
+        /static/admin.js|css с того же origin (CSP script-src 'self')."""
+        page = (Path(__file__).parent / "admin_page.html").read_text(encoding="utf-8")
+        return HTMLResponse(page, headers=html_security_headers(allow_self_scripts=True))
+
+    @app.get("/static/admin.js")
+    def static_admin_js(request: Request, token: str = "",
+                        authorization: str = Header(default="")):
+        return _static_page_asset(request, token, authorization,
+                                  "admin.js", "application/javascript",
+                                  require_auth=False)
+
+    @app.get("/static/admin.css")
+    def static_admin_css(request: Request, token: str = "",
+                         authorization: str = Header(default="")):
+        return _static_page_asset(request, token, authorization,
+                                  "admin.css", "text/css", require_auth=False)
 
     @app.get("/tracker/file/{kind}/{name}")
     def tracker_file(

@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Veles - админ-панель</title>
+<link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<header>
+  <h1>Veles - админ-панель</h1>
+  <p id="apibanner" hidden>API недоступен - ниже данные последней успешной загрузки.</p>
+  <p class="tokrow">
+    <label for="token">Токен админа
+      <input type="password" id="token" autocomplete="off" placeholder="VELES_API_TOKEN">
+    </label>
+    <button type="button" id="tokensave">Сохранить</button>
+    <span id="apistatus"></span>
+  </p>
+  <p id="authmsg" class="bad" hidden></p>
+  <nav id="tabs">
+    <button type="button" data-tab="overview">Обзор</button>
+    <button type="button" data-tab="docs">Документы</button>
+    <button type="button" data-tab="jobs">Задачи</button>
+    <button type="button" data-tab="groups">Группы</button>
+    <button type="button" data-tab="ask">Вопрос</button>
+    <button type="button" data-tab="upload">Загрузка</button>
+  </nav>
+</header>
+<main>
+  <section id="tab-overview" class="tab">
+    <h2>Обзор</h2>
+    <table>
+      <tbody>
+        <tr><th>Сервис (/healthz)</th><td id="ov-health"><i>загрузка...</i></td></tr>
+        <tr><th>Индекс (/readyz)</th><td id="ov-ready"><i>загрузка...</i></td></tr>
+        <tr><th>Версия фасада</th><td id="ov-version">-</td></tr>
+        <tr><th>Модель синтеза</th><td id="ov-model">-</td></tr>
+        <tr><th>Документов</th><td id="ov-docs">-</td></tr>
+        <tr><th>Узлов в поиске</th><td id="ov-nodes">-</td></tr>
+        <tr><th>Узлов в архиве (superseded)</th><td id="ov-superseded">-</td></tr>
+        <tr><th>Эмбеддер</th><td id="ov-embed">-</td></tr>
+      </tbody>
+    </table>
+    <p><small>Управления пользователями в API нет: личности приходят из заголовков
+    identity-режимов (или bearer-владельца); в панели виден только user_id из задач.</small></p>
+  </section>
+
+  <section id="tab-docs" class="tab" hidden>
+    <h2>Документы</h2>
+    <p>
+      <input type="search" id="docfilter" placeholder="поиск по названию">
+      <button type="button" id="docsrefresh">Обновить</button>
+    </p>
+    <p id="docmsg"></p>
+    <div id="docsbox"><p><i>загрузка...</i></p></div>
+  </section>
+
+  <section id="tab-jobs" class="tab" hidden>
+    <h2>Задачи обработки</h2>
+    <p><button type="button" id="jobsrefresh">Обновить</button> <span id="jobsnote"></span></p>
+    <div id="jobsbox"><p><i>загрузка...</i></p></div>
+    <div id="jobdetail"></div>
+  </section>
+
+  <section id="tab-groups" class="tab" hidden>
+    <h2>Группы доступа</h2>
+    <p class="plate">Состав групп правится файлом groups.json в каталоге данных
+    (VELES_DATA) - API создания и правки групп в фасаде нет; фасад перечитывает
+    файл на каждый запрос.</p>
+    <div id="groupsbox"><p><i>загрузка...</i></p></div>
+  </section>
+
+  <section id="tab-ask" class="tab" hidden>
+    <h2>Вопрос базе</h2>
+    <form id="askform">
+      <p><textarea id="askq" rows="3" placeholder="Текст вопроса"></textarea></p>
+      <p class="row">
+        <label>top_k <input type="number" id="asktopk" value="5" min="1" max="20" class="num"></label>
+        <label>От имени пользователя
+          <input type="text" id="askas" class="wide" placeholder="email, необязательно">
+        </label>
+        <button type="submit">Спросить</button>
+      </p>
+    </form>
+    <div id="askout"><p><i>ответ появится здесь</i></p></div>
+  </section>
+
+  <section id="tab-upload" class="tab" hidden>
+    <h2>Загрузка документа</h2>
+    <p>Файл (.txt, .md, .pdf) уходит в очередь обработки; после обработки документ
+    сразу доступен в поиске. Повторная загрузка того же документа создаёт новую
+    редакцию (старая сохраняется).</p>
+    <form id="upform">
+      <p><input type="file" id="upfile" accept=".txt,.md,.pdf"></p>
+      <p><label>Название
+        <input type="text" id="uptitle" class="wide" placeholder="необязательно">
+      </label></p>
+      <p><label>Группа
+        <select id="upgroup"><option value="">личный документ</option></select>
+      </label> <small>пусто - документ увидит только владелец токена/пользователь</small></p>
+      <p><button type="submit">Загрузить</button></p>
+    </form>
+    <p id="upmsg"></p>
+  </section>
+</main>
+<p><small>Страница управления бэкендом; вопросы пользователей - в веб-чате и
+Telegram. Токен хранится в localStorage этого браузера и в URL не используется.</small></p>
+<script src="/static/admin.js"></script>
+</body>
+</html>

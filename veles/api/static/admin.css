@@ -1,0 +1,43 @@
+/* Админ-панель (/admin): плотные таблицы, минимум цвета; тёмная и светлая
+ * темы через prefers-color-scheme - инлайн-стилей нет (CSP без unsafe-inline).
+ * По образцу upload.css. */
+body {
+  font-family: system-ui, sans-serif;
+  margin: 1rem auto;
+  max-width: 64rem;
+  padding: 0 1rem;
+  line-height: 1.45;
+  background: #fafafa;
+  color: #111;
+}
+@media (prefers-color-scheme: dark) {
+  body { background: #161618; color: #e8e8e8; }
+  a { color: #7ab8ff; }
+}
+h1 { font-size: 1.4rem; margin-bottom: 0.3rem; }
+h2 { font-size: 1.15rem; }
+h3 { font-size: 1rem; }
+table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
+th, td { border: 1px solid #8884; padding: 0.3rem 0.5rem; text-align: left; font-size: 0.92em; vertical-align: top; }
+thead th { background: #8881; }
+code { font-size: 0.9em; }
+small { opacity: 0.7; }
+button { padding: 0.35rem 0.9rem; cursor: pointer; }
+input, select, textarea { font: inherit; padding: 0.2rem 0.4rem; }
+textarea { width: 100%; box-sizing: border-box; }
+input.wide { width: 22rem; max-width: 60%; }
+input.num { width: 4rem; }
+input[type="search"] { width: 20rem; max-width: 60%; }
+.tokrow input { width: 18rem; }
+nav#tabs { margin: 0.6rem 0; }
+nav#tabs button { margin-right: 0.3rem; }
+nav#tabs button.active { font-weight: 700; text-decoration: underline; }
+p.row { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
+.plate { border: 1px solid #8884; padding: 0.4rem 0.7rem; }
+.ok { color: #1a7f37; font-weight: 600; }
+.bad { color: #c62828; font-weight: 600; }
+.warn { color: #9a6700; font-weight: 600; }
+.dim { opacity: 0.7; }
+.answer { border: 1px solid #8884; padding: 0.5rem 0.8rem; margin: 0.5rem 0; }
+#jobdetail { margin-top: 0.8rem; }
+#apibanner { border: 1px solid #c62828; color: #c62828; padding: 0.3rem 0.7rem; }
