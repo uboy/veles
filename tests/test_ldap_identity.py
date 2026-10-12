@@ -383,3 +383,11 @@ def test_DEBUG_ci_candidates(ldap_server):
     except Exception as e:
         print("OPEN-FAIL:", type(e).__name__, e)
     assert False, "debug: см. Captured stdout"
+
+
+def test_receive_timeout_is_int() -> None:
+    """Регрессия CI 12.10: receive_timeout=float на Linux ронял bind
+    (ldap3 pack('LL', ...) требует int); connect_timeout может быть float."""
+    from veles.policy.ldap_identity import receive_timeout_s
+
+    assert isinstance(receive_timeout_s(), int) and receive_timeout_s() >= 1

@@ -120,6 +120,14 @@ def timeout_s() -> float:
     return t
 
 
+def receive_timeout_s() -> int:
+    """receive_timeout для ldap3 Connection - ЦЕЛОЕ: на Linux ldap3 пакует его
+    в SO_RCVTIMEO через struct.pack('LL', ...), float даёт
+    struct.error 'required argument is not an integer' (найдено на CI 12.10:
+    Windows-ветка ldap3 сама делает int(), Linux-ветка - нет)."""
+    return max(1, int(timeout_s()))
+
+
 def jwt_ttl_s() -> int:
     """Время жизни выпущенного jwt (VELES_LDAP_JWT_TTL_S, дефолт 600с).
     exp проверяется существующим verify_hs256 на каждом запросе - «повторный
@@ -225,7 +233,7 @@ def authenticate(username: str, password: str) -> LdapIdentity:
         server = ldap3.Server(ldap_url(), connect_timeout=timeout_s(), get_info=None)
         conn = ldap3.Connection(
             server, user=user_dn, password=password,
-            auto_bind=True, receive_timeout=timeout_s(),
+            auto_bind=True, receive_timeout=receive_timeout_s(),
         )
     except ldap3.core.exceptions.LDAPBindError:
         # сервер ответил отказом в bind: неверный пароль или записи нет -
