@@ -234,6 +234,15 @@ def authenticate(username: str, password: str) -> LdapIdentity:
     except ldap3.core.exceptions.LDAPException as e:
         logger.warning("LDAP недоступен (%s)", type(e).__name__)
         raise LdapUnavailableError("каталог пользователей недоступен") from None
+    except Exception as e:
+        # не-LDAP исключение (сокеты и пр.): 503 с типом и адресом - пароль
+        # в деталь не попадает никогда; нужно для диагностики окружений
+        detail = (
+            f"LDAP-соединение не удалось: {type(e).__name__}: {e}; "
+            f"server={server.host!r}:{server.port!r}"
+        )
+        logger.warning("%s", detail)
+        raise LdapUnavailableError(detail) from e
     try:
         found = _collect_groups(conn, ldap3, uid, user_dn, bdn, gbase)
     finally:
