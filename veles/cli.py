@@ -1,4 +1,4 @@
-"""CLI veles: scan-corpus | ingest | index | ask | add | delete | status.
+"""CLI veles: scan-corpus | ingest | index | ask | add | delete | sync | status.
 
 Запуск: python -m veles <command> ...
 """
@@ -235,6 +235,91 @@ def cmd_add(args: argparse.Namespace) -> int:
     return 0
 
 
+def _print_sync_plan(plan, skipped_format_counts: dict[str, int]) -> None:
+    """Человекочитаемая дельта sync (общая для dry-run, подтверждения и применения)."""
+    from .ingest.sync import REASON_FORMAT
+
+    if plan.added:
+        print(f"новые файлы ({len(plan.added)}):")
+        for sf in plan.added:
+            print(f"  + {sf.rel}")
+    if plan.updated:
+        print(f"изменённые ({len(plan.updated)}):")
+        for sf in plan.updated:
+            print(f"  ~ {sf.rel}")
+    if plan.deleted:
+        print(f"удалённые из источника ({len(plan.deleted)}):")
+        for doc_id in plan.deleted:
+            print(f"  - {doc_id}")
+    for entry in plan.skipped:
+        if entry.reason != REASON_FORMAT:
+            print(f"  ! пропущен ({entry.reason}): {entry.rel}")
+    if skipped_format_counts:
+        pretty = ", ".join(f"{ext}: {n}" for ext, n in sorted(skipped_format_counts.items()))
+        print(f"  ! пропущены по формату: {pretty}")
+    print(
+        f"дельта: добавлено={len(plan.added)}, обновлено={len(plan.updated)}, "
+        f"удалено={len(plan.deleted)}, без изменений={len(plan.unchanged)}, "
+        f"пропущено={len(plan.skipped)}"
+    )
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """Коннектор №1 (JTBD P0-1): синхронизация каталога-источника с каноном.
+
+    Источник ТОЛЬКО читается: новые файлы (txt/md/pdf) ингестятся, изменённые
+    становятся новой ревизией (K3), удалённые из источника - tombstone (K10,
+    только документы, созданные sync этого же корня). Если рядом с каноном
+    собран индекс (meta.json существует) - дельта дописывается в живой индекс
+    без пересборки; индекса нет - только канон. Без --yes (и в --dry-run)
+    дельта только показывается; параллельные sync отсечены файловым локом."""
+    import os
+    from collections import Counter
+
+    from .ingest import sync as sync_mod
+    from .ingest.sync import REASON_FORMAT
+
+    root = Path(args.root).expanduser()
+    if not root.is_dir():
+        print(f"каталог-источник не найден: {root}")
+        return 1
+    root = root.resolve()
+    by = args.by or os.environ.get("VELES_INGESTED_BY", "").strip() or "sync"
+
+    try:
+        with sync_mod.sync_lock():
+            plan = sync_mod.build_plan(root)
+            format_counts = Counter(e.rel.rsplit(".", 1)[-1].lower()
+                                    for e in plan.skipped if e.reason == REASON_FORMAT)
+            _print_sync_plan(plan, {f".{ext}": n for ext, n in format_counts.items()})
+            if args.dry_run:
+                print("dry-run: ничего не изменено")
+                return 0
+            if plan.has_delta and not args.yes:
+                print("Подтвердите применение дельты: --yes")
+                return 1
+            # применение (и при нулевой дельте): без дельты apply доводит до
+            # индекса незакрытые намерения прошлых sync (самолечение после
+            # падения между каноном и индексом) - это не деструктивная дельта
+            report = sync_mod.apply_plan(
+                plan, root, by=by, index_dir=INDEX_DIR, embedder_factory=build_embedder
+            )
+    except TimeoutError:
+        print("другой veles sync уже выполняется (файловый лок занят) - повторите позже")
+        return 1
+
+    print(
+        f"синхронизация завершена: добавлено={len(report.added)}, "
+        f"обновлено={len(report.updated)}, удалено={len(report.deleted)}, "
+        f"доведено до индекса={len(report.repaired)} "
+        f"(узлов выведено из индекса: {report.tombstoned_nodes}), "
+        f"ошибок={len(report.errors)}"
+    )
+    for err in report.errors:
+        print(f"  ! {err}")
+    return 1 if report.errors else 0
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     docs = list(iter_documents())
     all_revs = list(iter_documents(include_revisions=True))
@@ -358,6 +443,13 @@ def main() -> int:
     p.add_argument("document_id", help="идентификатор документа (как в цитатах/source-ссылках)")
     p.add_argument("--yes", action="store_true", help="удалить без показа плана")
     p.set_defaults(func=cmd_delete)
+
+    p = sub.add_parser("sync", help="синхронизация каталога-источника с каноном (txt/md/pdf, по sha256)")
+    p.add_argument("--root", required=True, help="каталог-источник (только читается)")
+    p.add_argument("--dry-run", action="store_true", help="показать дельту, ничего не меняя")
+    p.add_argument("--yes", action="store_true", help="применить дельту без подтверждения")
+    p.add_argument("--by", default="", help="кто синхронизирует (логин/почта); иначе env VELES_INGESTED_BY")
+    p.set_defaults(func=cmd_sync)
 
     args = ap.parse_args()
     return args.func(args)

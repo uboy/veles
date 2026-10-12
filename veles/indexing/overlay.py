@@ -41,8 +41,16 @@ from ..config import EMBED_MODEL
 # ревью K10 P1: писателей оверлея больше одного - воркер очереди (дельта
 # загрузки) и DELETE в тредпуле фасада (tombstone). Без лока параллельный
 # read-modify-write одного overlay.npz молча теряет дельту проигравшего
-# (tombstone - удалённый всплывает после рестарта; дельта - загрузка исчезает)
+# (tombstone - удалённый всплывает после рестарта; дельта - загрузка исчезает).
+# Двухуровневый лок (ревью sync-коннектора): _OVERLAY_WRITE_LOCK закрывает
+# потоки одного процесса (фасад: воркер очереди + тредпул), файловый лок
+# (veles/locks.py) - ПРОЦЕССЫ: `veles sync`/`veles add` рядом с фасадом без
+# него теряли бы чужую дельту (потерянный tombstone возвращает удалённый
+# документ после рестарта, потерянный апсерт прячет документ до пересборки)
 _OVERLAY_WRITE_LOCK = threading.Lock()
+
+# имя lock-файла рядом с оверлеем (межпроцессная сериализация писателей)
+OVERLAY_LOCK_NAME = "overlay.lock"
 
 OVERLAY_NAME = "overlay.npz"
 
@@ -120,18 +128,24 @@ def _apply_checked(bundle, data: dict) -> None:
 
 def append_overlay(index_dir: Path, new_nodes: dict, patches: dict,
                    ids: list[str], matrix: np.ndarray,
-                   bm25_pairs: list[tuple[str, str]]) -> None:
+                   bm25_pairs: list[tuple[str, str]],
+                   timeout_s: float = 120.0) -> None:
     """Дописать дельту одной загрузки к оверлею и атомарно перезаписать файл.
 
     Накопительный файл переписывается целиком (объём = только пользовательские
     загрузки, не весь индекс), tmp + replace - читатель всегда видит цельную
-    версию либо старую, либо новую.
+    версию либо старую, либо новую. Read-modify-write под двухуровневым локом:
+    поточный (_OVERLAY_WRITE_LOCK) + межпроцессный файловый overlay.lock
+    (timeout_s; занят дольше - TimeoutError, дельта не пишется молча).
     """
     index_dir = Path(index_dir)
     index_dir.mkdir(parents=True, exist_ok=True)
     # ревью K10 P1: read-modify-write + запись под модульным локом - DELETE
-    # (тредпул фасада) и финализация джоба (воркер очереди) сериализованы
-    with _OVERLAY_WRITE_LOCK:
+    # (тредпул фасада) и финализация джоба (воркер очереди) сериализованы;
+    # ревью sync-коннектора: тот же RMW сериализован и МЕЖДУ процессами
+    from ..locks import file_lock
+
+    with _OVERLAY_WRITE_LOCK, file_lock(index_dir / OVERLAY_LOCK_NAME, timeout_s=timeout_s):
         old = read_overlay(index_dir)
         old_meta = (old or {}).get("meta") or {}
 
