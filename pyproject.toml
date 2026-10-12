@@ -22,7 +22,7 @@ faiss = ["faiss-cpu>=1.8"]
 qdrant = ["qdrant-client>=1.10"]
 docling = ["docling>=2.0"]
 ldap = ["ldap3>=2.9"]
-test = ["pytest>=8", "ldaptor>=21.2"]
+test = ["pytest>=8", "ldaptor>=21.2", "ldap3>=2.9"]
 
 [project.scripts]
 veles = "veles.cli:main"

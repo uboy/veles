@@ -16,7 +16,7 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Установка пакета с модулями поиска
-        run: pip install -e ".[st,faiss,test]"
+        run: pip install -e ".[st,faiss,test,ldap]"
       - name: Тесты (без e2e и без сетевых проверок)
         run: python -m pytest tests/ --ignore=tests/e2e -q
         env:
