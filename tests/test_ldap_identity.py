@@ -16,6 +16,7 @@ userPassword, чтение memberOf записи и posixGroup (memberUid), жи
 from __future__ import annotations
 
 import json
+import os
 import logging
 import sys
 import threading
