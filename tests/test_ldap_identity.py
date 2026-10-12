@@ -349,3 +349,36 @@ def test_sign_hs256_symmetric_with_verify() -> None:
     assert verify_hs256(token, "чужой-секрет") is None
     with pytest.raises(ValueError):
         sign_hs256({}, "")
+
+
+def test_DEBUG_ci_candidates(ldap_server):
+    """Временная диагностика CI: версии, кандидаты адресов, пошаговый коннект."""
+    import sys
+
+    import ldap3
+    import twisted
+    import ldaptor
+
+    print("PY:", sys.version.split()[0], "| twisted:", twisted.__version__,
+          "| ldaptor:", getattr(ldaptor, "__version__", "?"),
+          "| ldap3:", ldap3.__version__)
+    s = ldap3.Server(os.environ["VELES_LDAP_URL"], connect_timeout=5, get_info=None)
+    print("SERVER host/port:", repr(s.host), repr(s.port))
+    cands = list(s.candidate_addresses())
+    print("CANDIDATES:", [(c[0], c[4]) for c in cands])
+    for a in cands:
+        try:
+            sk = socket.socket(*a[:3])
+            sk.settimeout(5)
+            sk.connect(a[4])
+            sk.close()
+            print("CONNECT-OK:", a[4])
+        except Exception as e:
+            print("CONNECT-FAIL:", a[4], type(e).__name__, e)
+    conn = ldap3.Connection(s, user="cn=x", password="y", auto_bind=False)
+    try:
+        conn.open()
+        print("OPEN-OK")
+    except Exception as e:
+        print("OPEN-FAIL:", type(e).__name__, e)
+    assert False, "debug: см. Captured stdout"
