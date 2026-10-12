@@ -14,6 +14,10 @@
   (payload: sub/email/name/role/iat/exp), секрет - VELES_IDENTITY_JWT_SECRET,
   тот же, что FORWARD_USER_INFO_HEADER_JWT_SECRET в Open WebUI.
 
+Тот же jwt-заголовок принимает и токен собственного выпуска (корпоративный
+вход LDAP, эпик ldap-identity): payload sub/groups/exp, группы из claims
+доверенные, потому что подпись уже проверена (см. sign_hs256/_claim_groups).
+
 Верификация JWT - stdlib (hmac/base64/json), новых зависимостей нет.
 
 Группы (K7): каждый аутентифицированный получает ``all`` («видно всем»)
@@ -128,6 +132,36 @@ def verify_hs256(token: str, secret: str, now: Optional[float] = None) -> Option
     return payload if isinstance(payload, dict) else None
 
 
+def sign_hs256(payload: dict, secret: str) -> str:
+    """Выпуск HS256-JWT stdlib-средствами - симметрично verify_hs256 выше.
+
+    Кто подписывает: сам veles (вход LDAP - veles/policy/ldap_identity.py);
+    payload уходит как есть, exp ставит вызывающий. Коды формата - компактные
+    (как у base64url-кодирования WebUI), пробельных отличий подписи нет.
+    """
+    if not secret:
+        raise ValueError("подпись jwt требует секрета")
+
+    def _b64url(raw: bytes) -> str:
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+
+    head = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode("utf-8"))
+    body = _b64url(json.dumps(payload).encode("utf-8"))
+    signing_input = f"{head}.{body}".encode("utf-8")
+    sig = _b64url(hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest())
+    return f"{head}.{body}.{sig}"
+
+
+def _claim_groups(payload: dict) -> set[str]:
+    """Группы из claims проверенного jwt (выпускает сам veles - вход LDAP,
+    veles/policy/ldap_identity.py). Доверять можно: подпись уже сошлась.
+    Не список непустых строк (в т.ч. WebUI-токены без групп) - игнор."""
+    raw = payload.get("groups")
+    if not isinstance(raw, list):
+        return set()
+    return {str(g).strip() for g in raw if isinstance(g, str) and g.strip()}
+
+
 class IdentityResolver(Protocol):
     """Шов Ф5: резолв личности запроса из заголовков (инвариант 5)."""
 
@@ -231,12 +265,16 @@ class JwtHeaderResolver:
             if payload is None:
                 continue
             raw = payload.get("email") or payload.get("sub") or payload.get("id") or ""
-            ident = self._identity(normalize_user_id(str(raw)))
+            ident = self._identity(
+                normalize_user_id(str(raw)), _claim_groups(payload)
+            )
             if ident is not None:
                 return ident
         return None
 
-    def _identity(self, uid: str) -> Optional[RequestIdentity]:
+    def _identity(
+        self, uid: str, extra_groups: Optional[set[str]] = None
+    ) -> Optional[RequestIdentity]:
         if not uid or _UNSAFE_USER_ID.search(uid):
             return None
         admin = uid in admin_emails()
@@ -246,8 +284,13 @@ class JwtHeaderResolver:
         # (hybrid_search пропускает групповой фильтр) - видит всё.
         # K7 (группы): all неявно у всех аутентифицированных; membership не-all
         # групп - из конфига групп; настроенные VELES_IDENTITY_GROUPS остаются
-        # общими (обратная совместимость K1).
-        groups = set(self._groups) | {GROUP_ALL} | membership_of(uid) | {f"user:{uid}"}
+        # общими (обратная совместимость K1). Группы входа LDAP (эпик
+        # ldap-identity) приходят claims-ом подписанного jwt - доверять можно,
+        # потому что подпись уже проверена (см. _claim_groups).
+        groups = (
+            set(self._groups) | {GROUP_ALL} | membership_of(uid) | {f"user:{uid}"}
+            | set(extra_groups or ())
+        )
         if admin:
             groups.add("*")
         return RequestIdentity(uid, admin, groups)

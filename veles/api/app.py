@@ -39,7 +39,17 @@ from ..policy.identity import (
     JwtHeaderResolver,
     RequestIdentity,
     StaticOwnerResolver,
+    sign_hs256,
     validated_user_id,
+)
+from ..policy.ldap_identity import (
+    AUTH_FAILED as LDAP_AUTH_FAILED,
+    LdapAuthError,
+    LdapConfigError,
+    LdapUnavailableError,
+    authenticate as ldap_authenticate,
+    is_configured as ldap_is_configured,
+    jwt_ttl_s as ldap_jwt_ttl_s,
 )
 from ..retrieval.retriever import format_timecode, hybrid_search, lost_force_prefix
 from .documents import router as documents_router  # K4: загрузка документов
@@ -127,6 +137,14 @@ class ChatRequest(pydantic.BaseModel):
     model: Optional[str] = None
     messages: list[ChatMessage]
     revision: Optional[str] = None
+
+
+class LdapLoginRequest(pydantic.BaseModel):
+    """Тело POST /v1/auth/ldap: доменные логин и пароль (без домена - он в
+    DN-шаблоне/UPN VELES_LDAP_BIND_DN_TEMPLATE)."""
+
+    username: str
+    password: str
 
 
 def _resolve_revision(bundle: IndexBundle, revision: Optional[str]) -> Optional[str]:
@@ -471,6 +489,55 @@ def create_app(
     app.state.veles = state
     app.include_router(documents_router)
     app.include_router(groups_router)  # K7: GET /v1/groups
+
+    # Корпоративный вход LDAP/AD (эпик ldap-identity). Fail-closed: без
+    # VELES_LDAP_URL маршрут НЕ регистрируется - запросы получают 404,
+    # существующие режимы (bearer/headers/jwt) не затронуты.
+    if ldap_is_configured():
+
+        @app.post("/v1/auth/ldap")
+        def auth_ldap(req: LdapLoginRequest) -> dict:
+            """Вход логином/паролем: bind в каталоге -> группы veles из
+            VELES_LDAP_GROUP_MAP -> короткоживущий HS256-jwt (sub+groups+exp).
+            Дальше клиент ходит с ним как X-OpenWebUI-User-Jwt (jwt-режим
+            identity) - фильтр по группам работает без изменений. Ответ 401
+            один и тот же для неверного пароля и неизвестного пользователя
+            (перечисление пользователей невозможно); пароль не логируется."""
+            secret = os.environ.get("VELES_IDENTITY_JWT_SECRET", "")
+            if not secret:
+                # jwt нечем подписать - честная ошибка конфигурации (500)
+                raise HTTPException(
+                    status_code=500,
+                    detail="LDAP-вход настроен, но VELES_IDENTITY_JWT_SECRET "
+                           "не задан - нечем подписывать jwt",
+                )
+            try:
+                ident = ldap_authenticate(req.username, req.password)
+            except LdapAuthError:
+                raise HTTPException(
+                    status_code=401, detail=LDAP_AUTH_FAILED
+                ) from None
+            except LdapConfigError as e:
+                raise HTTPException(status_code=500, detail=str(e)) from None
+            except LdapUnavailableError as e:
+                raise HTTPException(status_code=503, detail=str(e)) from None
+            ttl = ldap_jwt_ttl_s()
+            token = sign_hs256(
+                {
+                    "sub": ident.user_id,
+                    "groups": sorted(ident.groups),
+                    "exp": int(time.time()) + ttl,
+                },
+                secret,
+            )
+            return {
+                "access_token": token,
+                "token_type": "bearer",
+                "expires_in": ttl,
+                # группы veles, полученные из каталога (свои группы - не секрет;
+                # пароль в ответе/логах не появляется никогда)
+                "groups": sorted(ident.groups),
+            }
 
     def _auth(authorization: str) -> None:
         token = state["token"]
