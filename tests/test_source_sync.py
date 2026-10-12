@@ -536,6 +536,15 @@ def test_doc_dir_collision_by_case_win32(sync_env, monkeypatch, capsys) -> None:
     assert len(dirs) == 1
 
 
+def assert_link_skipped(out: str, rel: str) -> None:
+    """Ссылка-каталог вырезана из обхода. На Windows junction - не symlink,
+    ловится детектором петли (REASON_LOOP); на POSIX тот же make_dir_link
+    даёт симлинк, отсекаемый раньше с причиной REASON_SYMLINK. Обе причины
+    означают «в обход не идём, дубли не плодим»."""
+    reasons = (REASON_LOOP,) if sys.platform == "win32" else (REASON_LOOP, REASON_SYMLINK)
+    assert any(f"пропущен ({r}): {rel}" in out for r in reasons), out
+
+
 def test_junction_loop_cut(sync_env, monkeypatch, capsys) -> None:
     """(ревью) Ссылка-каталог в УЖЕ ПРОЙДЕННЫЙ каталог (junction на сам корень)
     вырезается: обход не зацикливается и не плодит дубли одного файла с разных
@@ -547,7 +556,7 @@ def test_junction_loop_cut(sync_env, monkeypatch, capsys) -> None:
 
     assert run_sync(monkeypatch, root, "--yes") == 0
     out = capsys.readouterr().out
-    assert f"пропущен ({REASON_LOOP}): петля" in out
+    assert_link_skipped(out, "петля")
     assert "добавлено=1" in out
     dirs = [p for p in env["canonical"].iterdir() if p.is_dir()]
     assert len(dirs) == 1  # один документ, без дублей "из глубины петли"
@@ -575,8 +584,8 @@ def test_junction_multi_loop_no_combinatorial_blowup(sync_env, monkeypatch, caps
     assert run_sync(monkeypatch, root, "--yes") == 0
     assert time.monotonic() - started < 30  # перебор длился бы минуты
     out = capsys.readouterr().out
-    assert f"пропущен ({REASON_LOOP}): петля_верх" in out
-    assert f"пропущен ({REASON_LOOP}): вложенный/петля_глуб" in out
+    assert_link_skipped(out, "петля_верх")
+    assert_link_skipped(out, "вложенный/петля_глуб")
     assert "добавлено=2" in out
     dirs = [p for p in env["canonical"].iterdir() if p.is_dir()]
     assert len(dirs) == 2
