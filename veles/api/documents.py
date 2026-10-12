@@ -53,6 +53,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
+from ..audit import actor_of, client_ip, get_audit  # журнал аудита действий
 from ..ingest.queue import (
     ALLOWED_EXTENSIONS,
     IngestQueue,
@@ -384,9 +385,22 @@ async def upload_document(
         except OSError:
             pass
         raise HTTPException(status_code=e.status_code, detail=e.detail)
+    # ответ фиксируется ДО записи аудита: статус джоба mutable и воркер успевает
+    # сменить его, пока журнал пишется (регрессия test_upload_json_find_and_
+    # citation) - контракт 202 не зависит от латентности аудита
+    content = {
+        "job_id": job.job_id,
+        "status": job.status,
+        "document_id": document_id,
+    }
+    # аудит (план admin-audit): target=имя файла, details=document_id
+    get_audit().log(
+        "upload", actor=actor_of(ident), admin=ident.admin,
+        target=filename, details=document_id, ip=client_ip(request),
+    )
     return JSONResponse(
         status_code=202,
-        content={"job_id": job.job_id, "status": job.status, "document_id": document_id},
+        content=content,
     )
 
 
@@ -475,6 +489,13 @@ def cancel_job(
     возвращается запись без изменений (отменять нечего)."""
     ident = _identity(request, authorization)
     record = _own_job_or_404(request, job_id, ident)
+    # аудит (план admin-audit): сама попытка отмены - в т.ч. no-op на
+    # завершённой задаче; кто и когда дёргал cancel, видно всегда
+    get_audit().log(
+        "job_cancel", actor=actor_of(ident), admin=ident.admin,
+        target=job_id, details=f"статус задачи: {record.get('status', '')}",
+        ip=client_ip(request),
+    )
     if record.get("status") not in ("queued", "running"):
         return record
     result = _queue(request).cancel(job_id)
@@ -504,14 +525,23 @@ def retry_job(
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     if job is None:  # гонка с рестартом фасада
         raise HTTPException(status_code=404, detail="задание не найдено")
+    # статус новой задачи - в снапшот до записи аудита (тот же контракт 202,
+    # что у загрузки: воркер может сменить mutable-статус, пока журнал пишется)
+    content = {
+        "job_id": job.job_id,
+        "status": job.status,
+        "document_id": job.document_id,
+        "retried_from": job_id,
+    }
+    # аудит (план admin-audit): повтор задачи - новая задача в details
+    get_audit().log(
+        "job_retry", actor=actor_of(ident), admin=ident.admin,
+        target=job_id, details=f"новая задача: {job.job_id}",
+        ip=client_ip(request),
+    )
     return JSONResponse(
         status_code=202,
-        content={
-            "job_id": job.job_id,
-            "status": job.status,
-            "document_id": job.document_id,
-            "retried_from": job_id,
-        },
+        content=content,
     )
 
 
@@ -522,13 +552,19 @@ def delete_job(
     """Убрать задачу из журнала (админка v2): завершённые (done/failed) -
     из памяти и журнала; активная - 409 «сначала отмените»."""
     ident = _identity(request, authorization)
-    _own_job_or_404(request, job_id, ident)
+    record = _own_job_or_404(request, job_id, ident)
     try:
         result = _queue(request).delete_job(job_id)
     except JobOperationRejected as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail)
     if result is None:
         raise HTTPException(status_code=404, detail="задание не найдено")
+    # аудит (план admin-audit): файл задачи - в details (что убрали из журнала)
+    get_audit().log(
+        "job_delete", actor=actor_of(ident), admin=ident.admin,
+        target=job_id, details=f"файл: {record.get('filename', '')}",
+        ip=client_ip(request),
+    )
     return result
 
 
@@ -627,6 +663,11 @@ def regroup_document(
             "overlay-патч групп %s не записан (%s): после рестарта откатится "
             "к снапшоту пересборки", canon_id, e,
         )
+    # аудит (план admin-audit): target=document_id, details=новые группы
+    get_audit().log(
+        "document_regroup", actor=actor_of(ident), admin=ident.admin,
+        target=canon_id, details=", ".join(parsed), ip=client_ip(request),
+    )
     return {
         "status": "regrouped",
         "document_id": canon_id,
@@ -709,6 +750,11 @@ def delete_document(
             "delete %s: узлов в индексе не найдено (индекс без документа?)",
             document_id,
         )
+    # аудит (план admin-audit): target=document_id, сколько узлов выведено
+    get_audit().log(
+        "document_delete", actor=actor_of(ident), admin=ident.admin,
+        target=document_id, details=f"узлов: {nodes}", ip=client_ip(request),
+    )
     return {
         "status": "deleted",
         "document_id": document_id,

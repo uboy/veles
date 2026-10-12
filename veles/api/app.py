@@ -25,9 +25,10 @@ from typing import Optional
 from urllib.parse import quote
 
 import pydantic
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, Response
 
+from ..audit import actor_of, client_ip, get_audit  # журнал аудита действий
 from ..config import INDEX_DIR, VELES_PUBLIC_URL, VELES_SOURCE_ROOTS
 from ..indexing.embedder import SentenceTransformersProvider
 from ..indexing.indexer import INDEX_LOCK, IndexBundle, load_index
@@ -496,13 +497,15 @@ def create_app(
     if ldap_is_configured():
 
         @app.post("/v1/auth/ldap")
-        def auth_ldap(req: LdapLoginRequest) -> dict:
+        def auth_ldap(req: LdapLoginRequest, request: Request) -> dict:
             """Вход логином/паролем: bind в каталоге -> группы veles из
             VELES_LDAP_GROUP_MAP -> короткоживущий HS256-jwt (sub+groups+exp).
             Дальше клиент ходит с ним как X-OpenWebUI-User-Jwt (jwt-режим
             identity) - фильтр по группам работает без изменений. Ответ 401
             один и тот же для неверного пароля и неизвестного пользователя
-            (перечисление пользователей невозможно); пароль не логируется."""
+            (перечисление пользователей невозможно); пароль не логируется -
+            в журнал аудита уходит только попытанный логин (аудит: плана
+            admin-audit, действия auth_ldap_ok/auth_ldap_fail)."""
             secret = os.environ.get("VELES_IDENTITY_JWT_SECRET", "")
             if not secret:
                 # jwt нечем подписать - честная ошибка конфигурации (500)
@@ -514,6 +517,14 @@ def create_app(
             try:
                 ident = ldap_authenticate(req.username, req.password)
             except LdapAuthError:
+                # аудит: неудачный вход - actor = попытанный логин (не личность);
+                # ошибки конфигурации/недоступности каталога (500/503) - не
+                # действия пользователя, в журнал не пишутся
+                get_audit().log(
+                    "auth_ldap_fail", actor=req.username, admin=False,
+                    target="/v1/auth/ldap", details="bind не удался",
+                    ip=client_ip(request),
+                )
                 raise HTTPException(
                     status_code=401, detail=LDAP_AUTH_FAILED
                 ) from None
@@ -529,6 +540,14 @@ def create_app(
                     "exp": int(time.time()) + ttl,
                 },
                 secret,
+            )
+            # admin на входе не известен (LdapIdentity без флага - админство
+            # решится позже, по VELES_ADMIN_EMAILS при резолве личности)
+            get_audit().log(
+                "auth_ldap_ok", actor=ident.user_id, admin=False,
+                target="/v1/auth/ldap",
+                details="группы: " + ", ".join(sorted(ident.groups)),
+                ip=client_ip(request),
             )
             return {
                 "access_token": token,
@@ -770,6 +789,15 @@ def create_app(
                     media = "application/pdf" if candidate.suffix.lower() == ".pdf" else (
                         "text/plain; charset=utf-8"
                     )
+                    # аудит (ревью раунда 1): чтение полного текста - вне
+                    # исключений плана; ident None = подписанная ссылка
+                    get_audit().log(
+                        "document_read", actor=actor_of(ident),
+                        admin=bool(ident and ident.admin),
+                        target=document_id,
+                        details="оригинал из VELES_SOURCE_ROOTS",
+                        ip=client_ip(request),
+                    )
                     return FileResponse(candidate, media_type=media, filename=basename)
 
         nodes = []
@@ -804,6 +832,14 @@ def create_app(
         parts.append("</body></html>")
         # security-заголовки - общая функция с /tracker (K8); CSP строгий,
         # без script-src 'unsafe-inline' (скролл убран в пользу #fragment)
+        # аудит (ревью раунда 1): текстовая сборка канона - тоже чтение
+        # полного текста документа
+        get_audit().log(
+            "document_read", actor=actor_of(ident),
+            admin=bool(ident and ident.admin),
+            target=document_id, details="текстовая сборка из канона",
+            ip=client_ip(request),
+        )
         return HTMLResponse("\n".join(parts), status_code=200,
                             headers=html_security_headers())
 
@@ -942,6 +978,13 @@ def create_app(
         # K20/K21: подписанные ссылки при заданном секрете в ЛЮБОМ режиме -
         # владельческий токен в URL цитат не попадает; без секрета - token= как раньше
         link_secret = state["link_secret"]
+        # аудит (план admin-audit): поиск пользователя - текст запроса в details
+        # (явное решение владельца, обрезка до 500 - в AuditLog.log); заголовки
+        # и токен в журнал не передаются
+        get_audit().log(
+            "search", actor=actor_of(ident), admin=ident.admin,
+            target="", details=req.query, ip=client_ip(request),
+        )
         return attach_citation_links(result, state["token"], link_secret,
                                      mint_token_links=state["identity_mode"] == "static")
 
@@ -998,6 +1041,13 @@ def create_app(
                 mint_token_links=state["identity_mode"] == "static",
             )
         rid = result["request_id"]
+        # аудит (план admin-audit): вопрос пользователя - текст последнего
+        # сообщения пользователя в details (обрезка до 500); target - запрошенная
+        # модель; токены и заголовки в журнал не передаются
+        get_audit().log(
+            "ask", actor=actor_of(ident), admin=ident.admin,
+            target=requested, details=question, ip=client_ip(request),
+        )
         return JSONResponse({
             "id": f"chatcmpl-veles-{rid}",
             "object": "chat.completion",
@@ -1184,6 +1234,47 @@ def create_app(
         return _static_page_asset(request, token, authorization,
                                   "admin.css", "text/css", require_auth=False)
 
+    @app.get("/v1/admin/audit")
+    def admin_audit(
+        request: Request,
+        actor: str = "",
+        action: str = "",
+        q: str = "",
+        since: str = "",
+        until: str = "",
+        limit: int = Query(default=100, ge=1, le=1000),
+        offset: int = Query(default=0, ge=0),
+        authorization: str = Header(default=""),
+    ) -> dict:
+        """Чтение журнала аудита (план admin-audit, фаза 2): ТОЛЬКО админ -
+        прочим 403, отказ пишется в тот же журнал (audit_access_denied);
+        успешные чтения аудита НЕ логируются (план: шум против пользы).
+        Фильтры: actor/action - точное совпадение, q - подстрока по
+        target/details без регистра, since/until - границы ISO-8601
+        (включительно; некорректная дата - 400), limit<=1000 (дефолт 100),
+        offset. Ответ: {events, total, limit, offset} - total до постраничного
+        среза (кормит «Показать ещё» вкладки «Аудит»)."""
+        ident = _identity(request, authorization)
+        if not ident.admin:
+            get_audit().log(
+                "audit_access_denied", actor=actor_of(ident), admin=False,
+                target="/v1/admin/audit", ip=client_ip(request),
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="журнал аудита доступен только администратору",
+            )
+        try:
+            return get_audit().read(
+                actor=actor, action=action, q=q,
+                since=since or None, until=until or None,
+                limit=limit, offset=offset,
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=400, detail=f"некорректная дата (since/until): {e}"
+            ) from None
+
     @app.get("/tracker/file/{kind}/{name}")
     def tracker_file(
         request: Request, kind: str, name: str, token: str = "",
@@ -1207,6 +1298,11 @@ def create_app(
             if not ident2.admin:
                 mine = root / ident2.user_id / kind / name
                 if mine.exists():
+                    # аудит (ревью раунда 1): пользователь читает свой файл
+                    get_audit().log(
+                        "tracker_read", actor=actor_of(ident2), admin=False,
+                        target=f"{kind}/{name}", ip=client_ip(request),
+                    )
                     return PlainTextResponse(mine.read_text(encoding="utf-8"),
                                              media_type="text/plain; charset=utf-8")
                 raise HTTPException(status_code=404, detail="не найдено")
@@ -1215,10 +1311,18 @@ def create_app(
             state_token = state["token"]
             if state_token and token != state_token and authorization != f"Bearer {state_token}":
                 raise HTTPException(status_code=401, detail="unauthorized")
+            ident2 = _owner_identity()
         users = [u for u in root.iterdir() if u.is_dir() and not u.name.startswith(".")]
         for user in users:
             p = user / kind / name
             if p.exists():
+                # аудит (ревью раунд 1): владелец/admin читает файл - чей
+                # каталог, видно из details
+                get_audit().log(
+                    "tracker_read", actor=actor_of(ident2), admin=ident2.admin,
+                    target=f"{kind}/{name}", details=f"каталог: {user.name}",
+                    ip=client_ip(request),
+                )
                 return PlainTextResponse(p.read_text(encoding="utf-8"),
                                          media_type="text/plain; charset=utf-8")
         raise HTTPException(status_code=404, detail="не найдено")

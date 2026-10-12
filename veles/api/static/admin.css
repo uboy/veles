@@ -27,8 +27,12 @@ input, select, textarea { font: inherit; padding: 0.2rem 0.4rem; }
 textarea { width: 100%; box-sizing: border-box; }
 input.wide { width: 22rem; max-width: 60%; }
 input.num { width: 4rem; }
+input.mid { width: 11rem; }
 input[type="search"] { width: 20rem; max-width: 60%; }
 .tokrow input { width: 18rem; }
+/* вкладка «Аудит»: строка фильтров переносится, детали таблицы - вёрткой */
+#tab-audit > p:nth-of-type(2) { display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap; }
+#auditbox td { word-break: break-word; }
 nav#tabs { margin: 0.6rem 0; }
 nav#tabs button { margin-right: 0.3rem; }
 nav#tabs button.active { font-weight: 700; text-decoration: underline; }

@@ -1,7 +1,8 @@
 /* Админ-панель veles (/admin): обзор, документы (+удаление, v2: чекбоксы,
  * массовая смена группы и массовое удаление), задачи (+v2: Отменить/
  * Перезапустить/Удалить, бейджи «уже в базе» и «дубль задачи»), группы,
- * тестовый вопрос, загрузка. Токен админа (VELES_API_TOKEN) вводится на
+ * тестовый вопрос, загрузка, аудит (журнал действий: фильтры, пагинация
+ * «Показать ещё», экспорт CSV). Токен админа (VELES_API_TOKEN) вводится на
  * странице и хранится в localStorage; каждый API-запрос несёт
  * Authorization: Bearer <токен>, в URL токен не используется. Вкладки -
  * показ/скрытие секций без перезагрузки; данные из ответов экранируются esc().
@@ -566,6 +567,129 @@ async function upload(ev) {
   }
 }
 
+// ---- Аудит ----------------------------------------------------------------
+
+/* Каталог действий (план admin-audit) - селект фильтра «Действие» и
+ * человекочитаемые подписи в таблице; неизвестный код показывается как есть. */
+const AUDIT_ACTIONS = [
+  ["auth_ldap_ok", "вход (LDAP)"],
+  ["auth_ldap_fail", "вход (LDAP) - отказ"],
+  ["search", "поиск"],
+  ["ask", "вопрос"],
+  ["upload", "загрузка документа"],
+  ["document_read", "чтение документа"],
+  ["tracker_read", "чтение файла трекера"],
+  ["document_delete", "удаление документа"],
+  ["document_regroup", "смена групп документа"],
+  ["job_cancel", "отмена задачи"],
+  ["job_retry", "перезапуск задачи"],
+  ["job_delete", "удаление задачи"],
+  ["audit_access_denied", "отказ на чтение аудита"],
+];
+
+const AUDIT_PAGE = 100; // размер страницы = limit бэкенда (максимум 1000)
+
+let AUDIT_ROWS = [];   // накопленная выборка (страницы «Показать ещё»)
+let AUDIT_TOTAL = 0;
+
+function auditLabel(code) {
+  for (let i = 0; i < AUDIT_ACTIONS.length; i++) {
+    if (AUDIT_ACTIONS[i][0] === code) return AUDIT_ACTIONS[i][1];
+  }
+  return code;
+}
+
+/* Строка запроса GET /v1/admin/audit: actor/action - точное совпадение,
+ * q - подстрока по target/details, since/until - период; значения уходят
+ * URLSearchParams-ом (экранирование query - не дело рук панели). */
+function auditQuery(offset) {
+  const p = new URLSearchParams();
+  const action = $("auditaction").value;
+  const actor = $("auditactor").value.trim();
+  const q = $("auditq").value.trim();
+  const since = $("auditsince").value;
+  const until = $("audituntil").value;
+  if (action) p.set("action", action);
+  if (actor) p.set("actor", actor);
+  if (q) p.set("q", q);
+  if (since) p.set("since", since);
+  if (until) p.set("until", until);
+  p.set("limit", String(AUDIT_PAGE));
+  p.set("offset", String(offset));
+  return p.toString();
+}
+
+/* Таблица время|кто|действие|цель|детали. Подстановки ТОЛЬКО через esc():
+ * details несёт текст запроса пользователя, target - имена файлов, actor -
+ * логин из заголовков; сырая вставка была бы HTML-инъекцией (прецедент
+ * ревью админки v2). Длинные детали - 200 символов в ячейке, полные в title. */
+function renderAudit() {
+  const box = $("auditbox");
+  if (!AUDIT_ROWS.length) { box.innerHTML = "<p><i>событий нет</i></p>"; return; }
+  const rows = AUDIT_ROWS.map((e) => {
+    const details = String(e.details || "");
+    return "<tr><td>" + esc(String(dash(e.ts)).replace("T", " ").slice(0, 19)) +
+      "</td><td>" + esc(dash(e.actor)) +
+      (e.admin ? ' <span class="warn" title="админ">админ</span>' : "") +
+      '</td><td title="' + esc(e.action) + '">' + esc(auditLabel(e.action)) +
+      "</td><td>" + esc(dash(e.target)) +
+      '</td><td title="' + esc(details) + '">' +
+      esc(details.slice(0, 200)) + (details.length > 200 ? "…" : "") +
+      "</td></tr>";
+  }).join("");
+  box.innerHTML = "<table><thead><tr><th>Время</th><th>Кто</th><th>Действие</th>" +
+    "<th>Цель</th><th>Детали</th></tr></thead><tbody>" + rows + "</tbody></table>";
+}
+
+/* Обновить (reset=true) или «Показать ещё» (reset=false - дописать страницу
+ * к накопленной выборке; offset - её длина, пагинация бэкенда). */
+async function loadAudit(reset) {
+  const msg = $("auditmsg");
+  const offset = reset ? 0 : AUDIT_ROWS.length;
+  try {
+    const d = await api("/v1/admin/audit?" + auditQuery(offset));
+    authOk();
+    AUDIT_ROWS = (reset ? [] : AUDIT_ROWS).concat(d.events || []);
+    AUDIT_TOTAL = d.total || 0;
+    renderAudit();
+    msg.textContent = "показано " + AUDIT_ROWS.length + " из " + AUDIT_TOTAL + " событий";
+    $("auditmore").hidden = AUDIT_ROWS.length >= AUDIT_TOTAL;
+  } catch (e) {
+    msg.textContent = errText(e);
+    $("auditmore").hidden = true;
+  }
+}
+
+/* Нейтрализация формул (CWE-1236, OWASP CSV-инъекция): details/target несут
+ * текст поиска/вопроса и имена файлов от ЛЮБОГО пользователя - ведущие
+ * =,+,-,@ (и таб/CR) Excel и LibreOffice исполняют как формулу при открытии
+ * экспорта; стандартная защита - префикс одиночной кавычки. */
+function csvSafe(v) {
+  const s = String(v === undefined || v === null ? "" : v);
+  return /^[=+\-@\t\r]/.test(s) ? "'" + s : s;
+}
+
+function csvCell(v) {
+  return '"' + csvSafe(v).replace(/"/g, '""') + '"';
+}
+
+/* Экспорт CSV текущей выборки (накопленные страницы): BOM - иначе Excel
+ * открывает utf-8 как cp1251; разделитель ';' - локаль RU; кавычки удваиваются. */
+function auditCsv() {
+  if (!AUDIT_ROWS.length) { $("auditmsg").textContent = "нечего экспортировать"; return; }
+  const lines = [["время", "кто", "действие", "цель", "детали"]].concat(
+    AUDIT_ROWS.map((e) => [e.ts || "", e.actor || "", e.action || "",
+      e.target || "", e.details || ""]));
+  const csv = "\ufeff" + lines.map((r) => r.map(csvCell).join(";")).join("\r\n");
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  a.download = "audit-" + new Date().toISOString().slice(0, 10) + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
 // ---- вкладки и старт ------------------------------------------------------
 
 function showTab(name) {
@@ -580,6 +704,7 @@ function showTab(name) {
   if (name === "docs") loadDocs();
   if (name === "jobs") loadJobs();
   if (name === "groups") loadGroups();
+  if (name === "audit") loadAudit(true);
 }
 
 function saveToken() {
@@ -590,6 +715,7 @@ function saveToken() {
   loadDocs();
   loadJobs();
   loadGroups();
+  loadAudit(true);
 }
 
 window.addEventListener("DOMContentLoaded", () => {
@@ -627,6 +753,16 @@ window.addEventListener("DOMContentLoaded", () => {
     const tr = ev.target.closest("tr[data-job]");
     if (tr) showJob(tr.dataset.job);
   });
+  // аудит: каталог действий в селект, фильтры (Enter в текстовых) и кнопки
+  $("auditaction").innerHTML = '<option value="">- любое -</option>' + AUDIT_ACTIONS.map(
+    (a) => '<option value="' + esc(a[0]) + '">' + esc(a[1] + " (" + a[0] + ")") +
+      "</option>").join("");
+  $("auditrefresh").addEventListener("click", () => loadAudit(true));
+  $("auditmore").addEventListener("click", () => loadAudit(false));
+  $("auditcsv").addEventListener("click", auditCsv);
+  ["auditactor", "auditq"].forEach((id) => $(id).addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") { ev.preventDefault(); loadAudit(true); }
+  }));
   $("askform").addEventListener("submit", ask);
   $("upform").addEventListener("submit", upload);
   loadOverview();

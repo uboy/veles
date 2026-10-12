@@ -25,6 +25,7 @@
     <button type="button" data-tab="groups">Группы</button>
     <button type="button" data-tab="ask">Вопрос</button>
     <button type="button" data-tab="upload">Загрузка</button>
+    <button type="button" data-tab="audit">Аудит</button>
   </nav>
 </header>
 <main>
@@ -110,6 +111,36 @@
       <p><button type="submit">Загрузить</button></p>
     </form>
     <p id="upmsg"></p>
+  </section>
+
+  <section id="tab-audit" class="tab" hidden>
+    <h2>Журнал аудита</h2>
+    <p>Кто, когда и что: входы, поиски и вопросы, загрузки, удаления, смены
+    групп, операции над задачами. Детали поиска и вопроса содержат текст
+    запроса пользователя. Успешные чтения этого журнала сами в него не пишутся;
+    отказ не-админу - пишется (audit_access_denied).</p>
+    <p>
+      <label>Действие
+        <select id="auditaction"><option value="">- любое -</option></select>
+      </label>
+      <label>Кто
+        <input type="text" id="auditactor" placeholder="email, точное совпадение" class="mid">
+      </label>
+      <label>Подстрока
+        <input type="text" id="auditq" placeholder="в цели или деталях" class="mid">
+      </label>
+      <label>С
+        <input type="datetime-local" id="auditsince">
+      </label>
+      <label>По
+        <input type="datetime-local" id="audituntil">
+      </label>
+      <button type="button" id="auditrefresh">Обновить</button>
+      <button type="button" id="auditcsv">CSV</button>
+    </p>
+    <p id="auditmsg"></p>
+    <div id="auditbox"><p><i>загрузка...</i></p></div>
+    <p><button type="button" id="auditmore" hidden>Показать ещё</button></p>
   </section>
 </main>
 <p><small>Страница управления бэкендом; вопросы пользователей - в веб-чате и

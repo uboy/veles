@@ -18,12 +18,14 @@ models) без bearer - 401, панель показывает просьбу в
 from __future__ import annotations
 
 import re
+from urllib.parse import quote
 
 import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
 from veles.api.app import VelesPipeline, create_app
+from veles.audit import reset_audit
 from veles.config import EMBED_DIM
 from veles.indexing.bm25 import Bm25Index
 from veles.indexing.indexer import IndexBundle
@@ -47,13 +49,19 @@ class HashingEmbedder:
 def clean_env(tmp_path, monkeypatch):
     """Тесты не зависят от окружения машины и не пишут в репозиторий:
     token/identity-режим снят (кроме теста, где токен задаётся явно), файл
-    групп и журнал джобов уезжают в tmp."""
+    групп и журнал джобов уезжают в tmp. Синглтон журнала аудита сбрасывается
+    на каждый тест: он кэширует VELES_DATA при первом вызове - без сброса
+    события ушли бы в tmp первого теста сессии."""
     monkeypatch.delenv("VELES_API_TOKEN", raising=False)
     monkeypatch.delenv("VELES_IDENTITY_MODE", raising=False)
     monkeypatch.delenv("VELES_LINK_SECRET", raising=False)
     monkeypatch.delenv("VELES_GROUPS_FILE", raising=False)
+    for name in ("VELES_AUDIT", "VELES_AUDIT_ROTATE_MB", "VELES_AUDIT_KEEP"):
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("VELES_DATA", str(tmp_path / "veles-data"))
-    return tmp_path
+    reset_audit()
+    yield tmp_path
+    reset_audit()
 
 
 def make_bundle() -> IndexBundle:
@@ -227,3 +235,75 @@ def test_jobs_action_guards() -> None:
                          ("DELETE", "/v1/documents/jobs/abc")):
         assert client.request(method, path).status_code == 401, path
         assert client.request(method, path, headers=auth).status_code == 404, path
+
+
+# --------------------------------------------------------- вкладка «Аудит»
+
+
+def test_admin_page_wires_audit_tab() -> None:
+    """Страница несёт вкладку «Аудит» (кнопка в нав + секция): фильтры
+    действие/кто/подстрока/период, «Обновить», «CSV», «Показать ещё»;
+    скрипт - запрос /v1/admin/audit, offset-пагинация и экспорт через blob."""
+    client = make_client()
+    page = client.get("/admin")
+    assert page.status_code == 200
+    for marker in ('data-tab="audit"', 'id="tab-audit"', 'id="auditaction"',
+                   'id="auditactor"', 'id="auditq"', 'id="auditsince"',
+                   'id="audituntil"', 'id="auditrefresh"', 'id="auditcsv"',
+                   'id="auditbox"', 'id="auditmore"'):
+        assert marker in page.text, marker
+    assert "Показать ещё" in page.text
+    js = client.get("/static/admin.js").text
+    for marker in ("/v1/admin/audit", "auditQuery", "renderAudit", "auditCsv",
+                   "URLSearchParams", "URL.createObjectURL",
+                   "audit_access_denied", "auth_ldap_fail", "job_retry"):
+        assert marker in js, marker
+
+
+def test_audit_tab_endpoint_contract() -> None:
+    """Запрос вкладки (точные параметры auditQuery: action, actor, q,
+    since, until, limit=100, offset) обрабатывается бэкендом: поиск пишется
+    событием search, фильтры отсекают, вторая страница «Показать ещё» пуста
+    при том же total; без bearer (вкладка без токена) - 401, панель покажет
+    просьбу ввести токен."""
+    client = make_client(api_token=TOKEN)
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    assert client.post(
+        "/v1/knowledge/query", json={"query": "порог закупки", "use_llm": False},
+        headers=auth,
+    ).status_code == 200
+
+    page1 = client.get("/v1/admin/audit?action=search&limit=100&offset=0",
+                       headers=auth)
+    assert page1.status_code == 200
+    body = page1.json()
+    assert body["total"] == 1 and body["events"][0]["action"] == "search"
+
+    assert client.get("/v1/admin/audit?q=" + quote("порог закупки"),
+                      headers=auth).json()["total"] == 1
+    assert client.get("/v1/admin/audit?actor=owner",
+                      headers=auth).json()["total"] == 1
+    assert client.get("/v1/admin/audit?action=upload",
+                      headers=auth).json()["total"] == 0
+    assert client.get("/v1/admin/audit?since=2000-01-01",
+                      headers=auth).json()["total"] == 1
+    # «Показать ещё»: offset за пределами - событий нет, total прежний
+    page2 = client.get("/v1/admin/audit?action=search&limit=100&offset=100",
+                       headers=auth)
+    assert page2.json()["total"] == 1 and page2.json()["events"] == []
+    # вкладка без токена: 401 (static-режим), не 403
+    assert client.get("/v1/admin/audit?action=search").status_code == 401
+
+
+def test_audit_csv_neutralizes_formulas() -> None:
+    """Ревью раунд 1 (CWE-1236): экспорт CSV обязан нейтрализовать ведущие
+    =,+,-,@ и таб/CR (префикс '), до удвоения кавычек - details несут текст
+    поиска/вопроса любого пользователя, исполнение формулы - Excel/LibreOffice
+    админа. Поведенчески JS pytest не исполняет - проверяется наличие
+    нейтрализации в коде экспорта (синтаксис - node --check вне pytest)."""
+    js = make_client().get("/static/admin.js").text
+    assert "function csvSafe" in js
+    # класс опасных первых символов присутствует дословно
+    assert "/^[=+\\-@\\t\\r]/" in js
+    # csvSafe применяется ДО удвоения кавычек в csvCell
+    assert js.index("csvSafe(v).replace") > js.index("function csvSafe")
