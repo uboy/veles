@@ -3,13 +3,29 @@
 POST /v1/documents        - multipart (file + опциональные title, group,
                             access_groups) или JSON {text, title, group};
                             создаёт джоб, ответ 202.
-GET /v1/documents/jobs    - список своих джобов (админ - все).
+GET /v1/documents/jobs    - список своих джобов (админ - все); админка v2:
+                            каждая запись несёт exists_in_base (документ уже
+                            в каноне) и duplicate_of (id более ранней активной
+                            задачи с тем же файлом).
 GET /v1/documents/jobs/{id} - статус queued/running/done/failed с причиной.
+POST /v1/documents/jobs/{id}/cancel - отмена задачи (админка v2): queued
+                            снимается из очереди, running - дочерний процесс
+                            разбора; failed «отменена владельцем».
+POST /v1/documents/jobs/{id}/retry - повторная постановка сохранённого
+                            L0-файла упавшей задачи (новый job_id).
+DELETE /v1/documents/jobs/{id} - убрать завершённую задачу из журнала.
+POST /v1/documents/{id}/groups - смена групп документа (админка v2): канон
+                            (манифест + узлы) и мета живого индекса
+                            (overlay-патч), права применяются немедленно;
+                            ТОЛЬКО админ (инвариант 5 - группы от клиента
+                            принимает только админ).
 DELETE /v1/documents/{id} - удаление документа целиком (K10): владелец
                             (user:<uid> в access_groups) или админ, чужой -
                             404 неотличимый; канон (все ревизии и assets) -
                             в trash, L0 удаляется, узлы выводятся из поиска
                             сразу (tombstone).
+Операции над задачами - как у DELETE: владелец задачи или админ, чужая - 404
+неотличимый.
 
 Личность и группы - только через identity фасада (инвариант 5, тот же шов,
 что у query/chat): документ пользователя несёт личную группу user:<uid>,
@@ -31,6 +47,7 @@ import threading
 import hmac
 from typing import Optional
 
+import numpy as np
 from fastapi import APIRouter, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -39,6 +56,7 @@ from starlette.concurrency import run_in_threadpool
 from ..ingest.queue import (
     ALLOWED_EXTENSIONS,
     IngestQueue,
+    JobOperationRejected,
     QueueCapacityExceeded,
     QuotaExceeded,
     check_quota,
@@ -73,6 +91,12 @@ class TextUpload(BaseModel):
     # K7: серверная группа для доступа (group=<id> из GET /v1/groups);
     # пусто - личная user:<uid>, безопасный дефолт K4 сохранён
     group: str = ""
+
+
+class RegroupRequest(BaseModel):
+    """Тело смены групп документа (админка v2): полный НОВЫЙ состав групп."""
+
+    groups: list[str]
 
 
 def _ctx(request: Request) -> dict:
@@ -366,14 +390,57 @@ async def upload_document(
     )
 
 
+def _canon_document_ids() -> set[str]:
+    """document_id всех документов канона - один проход по корням на вызов
+    (админка v2: exists_in_base для всего списка джобов разом, а не скан на
+    каждую запись). Легаси-близнецы не различаются: для подсказки панели
+    достаточно факта «документ в каноне есть»."""
+    from ..canonical.store import _manifest_document_id, canonical_roots
+
+    ids: set[str] = set()
+    for canon in canonical_roots():
+        if not canon.is_dir():
+            continue
+        for child in canon.iterdir():
+            did = _manifest_document_id(child)
+            if did:
+                ids.add(did)
+    return ids
+
+
+def _enrich_jobs(records: list[dict]) -> list[dict]:
+    """Поля админ-панели v2 (v2-spec §2) в каждой записи списка задач:
+    exists_in_base - document_id уже лежит в каноне (бейдж «уже в базе»);
+    duplicate_of - id более ранней АКТИВНОЙ (queued/running) задачи того же
+    пользователя с тем же именем файла (бейдж «дубль задачи №N»; завершённые
+    дубли не помечаются - их дельта уже применена или честно упала)."""
+    in_canon = _canon_document_ids()
+    first_active: dict[tuple[str, str], str] = {}
+    active = sorted(
+        (r for r in records if r.get("status") in ("queued", "running")),
+        key=lambda r: (str(r.get("created_at") or ""), str(r.get("job_id") or "")),
+    )
+    for r in active:
+        key = (str(r.get("user_id") or ""), str(r.get("filename") or ""))
+        first = first_active.setdefault(key, str(r.get("job_id") or ""))
+        r["duplicate_of"] = "" if first == r.get("job_id") else first
+    for r in records:
+        r.setdefault("duplicate_of", "")
+        did = r.get("document_id")
+        r["exists_in_base"] = bool(did) and did in in_canon
+    return records
+
+
 @router.get("/jobs")
 def list_jobs(request: Request, authorization: str = Header(default="")):
-    """Свои джобы (свежие первыми); админ видит все."""
+    """Свои джобы (свежие первыми); админ видит все. Каждая запись несёт
+    exists_in_base и duplicate_of (админка v2) - для всех, поле безобидное:
+    факт «файл уже в базе» виден и из поиска."""
     ident = _identity(request, authorization)
     records = _queue(request).list_jobs()
     if not ident.admin:
         records = [r for r in records if r.get("user_id") == ident.user_id]
-    return {"jobs": records}
+    return {"jobs": _enrich_jobs(records)}
 
 
 @router.get("/jobs/{job_id}")
@@ -388,6 +455,185 @@ def job_status(request: Request, job_id: str, authorization: str = Header(defaul
     if not ident.admin and record.get("user_id") != ident.user_id:
         raise HTTPException(status_code=404, detail="задание не найдено")
     return record
+
+
+def _own_job_or_404(request: Request, job_id: str, ident) -> dict:
+    """Запись джоба для операций v2; чужой джоб - тот же 404, что и
+    несуществующий (права как у DELETE /v1/documents: владелец или админ)."""
+    record = _queue(request).lookup(job_id)
+    if record is None or (not ident.admin and record.get("user_id") != ident.user_id):
+        raise HTTPException(status_code=404, detail="задание не найдено")
+    return record
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_job(
+    request: Request, job_id: str, authorization: str = Header(default="")
+) -> dict:
+    """Отмена задачи (админка v2): queued снимается из очереди, running -
+    дочерний процесс разбора; обе - failed «отменена владельцем». Завершённой
+    возвращается запись без изменений (отменять нечего)."""
+    ident = _identity(request, authorization)
+    record = _own_job_or_404(request, job_id, ident)
+    if record.get("status") not in ("queued", "running"):
+        return record
+    result = _queue(request).cancel(job_id)
+    if result is None:  # гонка с рестартом фасада между lookup и cancel
+        raise HTTPException(status_code=404, detail="задание не найдено")
+    return result
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_job(
+    request: Request, job_id: str, authorization: str = Header(default="")
+):
+    """Повторная постановка сохранённого L0-файла (админка v2): только для
+    упавшей задачи (отмена тоже даёт failed); создаётся НОВАЯ задача, старая
+    остаётся в истории. L0 не сохранился (провал разбора удаляет файл, K4) -
+    409 «повторите загрузку»."""
+    ident = _identity(request, authorization)
+    record = _own_job_or_404(request, job_id, ident)
+    if record.get("status") != "failed":
+        raise HTTPException(
+            status_code=409,
+            detail="перезапуск возможен только упавшей задачи",
+        )
+    try:
+        job = _queue(request).retry(job_id)
+    except JobOperationRejected as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    if job is None:  # гонка с рестартом фасада
+        raise HTTPException(status_code=404, detail="задание не найдено")
+    return JSONResponse(
+        status_code=202,
+        content={
+            "job_id": job.job_id,
+            "status": job.status,
+            "document_id": job.document_id,
+            "retried_from": job_id,
+        },
+    )
+
+
+@router.delete("/jobs/{job_id}")
+def delete_job(
+    request: Request, job_id: str, authorization: str = Header(default="")
+) -> dict:
+    """Убрать задачу из журнала (админка v2): завершённые (done/failed) -
+    из памяти и журнала; активная - 409 «сначала отмените»."""
+    ident = _identity(request, authorization)
+    _own_job_or_404(request, job_id, ident)
+    try:
+        result = _queue(request).delete_job(job_id)
+    except JobOperationRejected as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail)
+    if result is None:
+        raise HTTPException(status_code=404, detail="задание не найдено")
+    return result
+
+
+def _validate_regroup_groups(groups: list[str]) -> list[str]:
+    """Валидация нового состава групп (админка v2): непустой список без
+    повторов; серверные группы - из конфига (или all), личные user:<uid> -
+    с валидным uid (та же проверка, что у act-as, K16). 400 - при любом
+    нарушении, ДО поиска документа."""
+    parsed = sorted({g.strip() for g in (groups or []) if isinstance(g, str) and g.strip()})
+    if not parsed:
+        raise HTTPException(
+            status_code=400,
+            detail="пустой список групп: документ обязан нести хотя бы одну группу",
+        )
+    for group in parsed:
+        if group.startswith("user:"):
+            if validated_user_id(group[len("user:"):]) is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"недопустимая личная группа: {group!r} "
+                           "(ожидается user:<email пользователя>)",
+                )
+        elif not group_exists(group):
+            raise HTTPException(
+                status_code=400,
+                detail=f"неизвестная группа: {group!r}. Доступные: "
+                    f"{', '.join(sorted(defined_group_ids()))} (список: GET /v1/groups)",
+            )
+    return parsed
+
+
+@router.post("/{document_id:path}/groups")
+def regroup_document(
+    request: Request, document_id: str, body: RegroupRequest,
+    authorization: str = Header(default=""),
+) -> dict:
+    """Смена групп документа (админка v2, v2-spec §1): ТОЛЬКО админ (403
+    прочим - инвариант 5, группы от клиента принимает только админ). Канон:
+    манифест + access_group каждого узла (store.set_document_groups); живой
+    индекс: мета узлов патчится сразу + overlay-патч для рестарта (паттерн
+    tombstone_document). overlay не записался - в ответе overlay_saved=False:
+    права работают до рестарта, после - откатятся к снапшоту пересборки
+    (канон уже новый), громко в лог."""
+    import logging
+
+    from .. import config
+    from ..canonical.store import (
+        find_document_manifest,
+        set_document_groups as store_set_groups,
+    )
+    from ..indexing.overlay import append_overlay
+
+    ident = _identity(request, authorization)
+    if not ident.admin:
+        raise HTTPException(
+            status_code=403,
+            detail="смена групп документа доступна только администратору",
+        )
+    parsed = _validate_regroup_groups(body.groups)
+
+    manifest = find_document_manifest(document_id)
+    if manifest is None:
+        raise HTTPException(status_code=404, detail="документ не найден")
+    canon_id = str(manifest.get("document_id") or document_id)
+
+    info = store_set_groups(canon_id, parsed, by=ident.user_id or "owner")
+    if info is None:  # гонка: манифест видели, канон исчез - неотличимый 404
+        raise HTTPException(status_code=404, detail="документ не найден")
+
+    # живой индекс: присваивание значений меты (как superseded-патчи
+    # upsert_document - размер dict не меняется, читатели без лока безопасны)
+    nids: list[str] = []
+    pipeline = None
+    try:
+        pipeline = _ctx(request)["pipeline_fn"]()
+    except Exception:  # noqa: BLE001 - нет индекса: канон переписан, патч уйдёт
+        pass            # следующей пересборкой
+    if pipeline is not None:
+        for nid, meta in pipeline.bundle.node_meta.items():
+            if meta.get("document_id") == canon_id:
+                meta["access_groups"] = parsed
+                nids.append(nid)
+    overlay_saved = True
+    try:
+        append_overlay(
+            config.INDEX_DIR,
+            {},
+            {nid: {"access_groups": parsed} for nid in nids},
+            [],
+            np.zeros((0, 1), dtype=np.float32),
+            [],
+        )
+    except Exception as e:  # noqa: BLE001 - права уже действуют, но рестарт
+        overlay_saved = False
+        logging.getLogger("veles.api.documents").error(
+            "overlay-патч групп %s не записан (%s): после рестарта откатится "
+            "к снапшоту пересборки", canon_id, e,
+        )
+    return {
+        "status": "regrouped",
+        "document_id": canon_id,
+        "groups": parsed,
+        "nodes": len(nids),
+        "overlay_saved": overlay_saved,
+    }
 
 
 @router.delete("/{document_id:path}")

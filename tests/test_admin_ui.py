@@ -8,6 +8,9 @@ Authorization JSON-запросов). Единственная правка да
 узлов (кормит вкладки «Документы» и «Группы»); новых JSON-эндпоинтов нет.
 Негатив: при настроенном токене все API-вкладки панели (stats/groups/jobs/
 models) без bearer - 401, панель показывает просьбу ввести токен.
+Админка v2: страница несёт массовую панель «Документов» (чекбоксы, смена
+группы, массовое удаление), скрипт - кнопки задач и бейджи; новые эндпоинты
+(POST {id}/groups, jobs cancel/retry/delete) - только под bearer владельца.
 Индекс - ручная мета узлов; эмбеддер - детерминированный hashing (канон:
 тесты без загрузки моделей), как в test_upload_ui.
 """
@@ -173,3 +176,54 @@ def test_api_tabs_require_bearer_when_token_set() -> None:
     models = client.get("/v1/models", headers=auth)
     assert models.status_code == 200
     assert [m["id"] for m in models.json()["data"]]
+
+
+# --------------------------------------------------- админка v2: wiring и гейты
+
+
+def test_admin_page_wires_bulk_and_job_actions() -> None:
+    """Страница несёт массовую панель «Документов» (v2: чекбоксы, смена
+    группы, массовое удаление), а скрипт - вызовы новых эндпоинтов и бейджи."""
+    client = make_client()
+    page = client.get("/admin")
+    assert page.status_code == 200
+    for marker in ('id="bulkpanel"', 'id="bulkgroup"', 'id="bulkregroup"',
+                   'id="bulkdelete"', 'id="bulkprogress"'):
+        assert marker in page.text, marker
+    js = client.get("/static/admin.js").text
+    for marker in ("selrow", "selall", "/groups", "/cancel",
+                   "/retry", "jobact", "jobBadges", "уже в базе",
+                   "дубль задачи"):
+        assert marker in js, marker
+
+
+def test_regroup_endpoint_guards() -> None:
+    """POST /v1/documents/{id}/groups - только под bearer владельца (401 без
+    него); валидация тела до поиска документа (400: пустой список, unknown
+    группа); несуществующий документ с валидным телом - 404."""
+    client = make_client(api_token=TOKEN)
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    url = "/v1/documents/uploads/reglament.md/groups"
+    assert client.post(url, json={"groups": ["test-dept"]}).status_code == 401
+    assert client.post(
+        url, json={"groups": []}, headers=auth).status_code == 400
+    assert client.post(
+        url, json={"groups": ["нет-такой"]}, headers=auth).status_code == 400
+    assert client.post(
+        url, json={"groups": ["user:битый!!"]}, headers=auth).status_code == 400
+    assert client.post(
+        url, json={"groups": ["test-dept"]}, headers=auth).status_code == 404
+
+
+def test_jobs_action_guards() -> None:
+    """cancel/retry/delete задач: без bearer - 401, неизвестная задача - 404
+    (права как у DELETE /v1/documents; список полей v2 в пустом ответе не
+    ломает форму {jobs: []})."""
+    client = make_client(api_token=TOKEN)
+    auth = {"Authorization": f"Bearer {TOKEN}"}
+    assert client.get("/v1/documents/jobs", headers=auth).json() == {"jobs": []}
+    for method, path in (("POST", "/v1/documents/jobs/abc/cancel"),
+                         ("POST", "/v1/documents/jobs/abc/retry"),
+                         ("DELETE", "/v1/documents/jobs/abc")):
+        assert client.request(method, path).status_code == 401, path
+        assert client.request(method, path, headers=auth).status_code == 404, path

@@ -19,6 +19,11 @@ append-журнал <VELES_DATA>/uploads/ingest-jobs.jsonl с boot-id проце
 
 Аудит: событие upload в ingest-audit.jsonl (by, размер, document_id, job_id,
 исход) рядом с событиями ingest из canonical store.
+
+Админка v2 (docs/plan/admin-ui/v2-spec.md §2): cancel() снимает queued из
+очереди и убивает дочерний процесс разбора у running, retry() заново ставит
+сохранённый L0-файл, delete_job() убирает запись из журнала; управление -
+через маршруты documents.py под правами владельца задачи/админа.
 """
 
 from __future__ import annotations
@@ -73,10 +78,14 @@ def _isolated_child(fn, args: tuple, conn) -> None:
         conn.close()
 
 
-def _run_isolated(fn, args: tuple, timeout_s: float):
+def _run_isolated(fn, args: tuple, timeout_s: float, on_start=None):
     """fn(*args) в отдельном процессе; не уложился - процесс снимается,
     IsolatedTimeout. fn обязана быть функцией уровня модуля (spawn на Windows
-    передаёт её по имени), аргументы - пиклируемые."""
+    передаёт её по имени), аргументы - пиклируемые.
+
+    on_start(proc) вызывается после успешного старта дочернего процесса -
+    очередь запоминает его, чтобы cancel (админка v2) мог снять идущий разбор.
+    """
     import multiprocessing
 
     parent_conn, child_conn = multiprocessing.Pipe(duplex=False)
@@ -88,6 +97,8 @@ def _run_isolated(fn, args: tuple, timeout_s: float):
     except OSError as e:  # noqa: BLE001 - изоляция недоступна: прежнее поведение
         logger.warning("изоляция разбора недоступна (%s) - парс в своём процессе", e)
         return fn(*args)
+    if on_start is not None:
+        on_start(proc)
     child_conn.close()
     proc.join(timeout_s)
     if proc.is_alive():
@@ -194,6 +205,17 @@ class QuotaExceeded(Exception):
 class QueueCapacityExceeded(Exception):
     """Кап очереди загрузки (K8): queued-джобов больше VELES_INGEST_QUEUE_MAX -
     фасад отвечает 429 тем же контрактом, что QuotaExceeded."""
+
+    def __init__(self, status_code: int, detail: str):
+        super().__init__(detail)
+        self.status_code = status_code
+        self.detail = detail
+
+
+class JobOperationRejected(Exception):
+    """Операция над джобом отклонена (админка v2): у retry нет сохранённого
+    L0-файла, delete - задача ещё в очереди/в работе. status_code/detail -
+    тот же контракт отказа для HTTP-ответа, что у QuotaExceeded."""
 
     def __init__(self, status_code: int, detail: str):
         super().__init__(detail)
@@ -473,6 +495,11 @@ class IngestQueue:
         self._submit_lock = threading.Lock()
         # журнал джобов: append воркера и ротация под одним локом (ревью K8 P2)
         self._ledger_lock = threading.Lock()
+        # админка v2: джобы с запрошенной отменой + идущий дочерний процесс
+        # разбора (один воркер - ссылка без лока; cancel из потока запроса
+        # только читает её и снимает процесс)
+        self._cancel_requested: set[str] = set()
+        self._child_proc = None
         self._thread: threading.Thread | None = None
         if start_worker:
             self._thread = threading.Thread(
@@ -528,6 +555,103 @@ class IngestQueue:
 
     def close(self) -> None:
         self._stopped = True
+
+    # ------------------------------------------------- отмена/повтор/удаление
+
+    def cancel(self, job_id: str) -> dict | None:
+        """Отмена задачи (админка v2): queued - снимается из очереди, running -
+        изолированный дочерний процесс разбора снимается; обе помечаются failed
+        «отменена владельцем». Завершённая возвращается без изменений (отменять
+        нечего), неизвестная - None (404 у вызывающего).
+
+        Гонки закрыты воркером: взятый из очереди, но ещё не стартовавший джоб
+        не входит в _process (проверка _cancel_requested на старте и после
+        разбора). Окно «отмена между последней проверкой и записью в канон»
+        закрывается в свою пользу: документ доедет, статус честно failed - ошибка
+        миллисекундного окна против секунд ожидания владельца."""
+        job = self._jobs.get(job_id)
+        if job is None:
+            return None
+        if job.status in ("done", "failed"):
+            return job.to_dict()
+        self._cancel_requested.add(job_id)
+        if job.status == "running":
+            proc = self._child_proc
+            if proc is not None:
+                try:
+                    if proc.is_alive():
+                        proc.kill()
+                except (OSError, ValueError) as e:  # noqa: BLE001 - не снялся -
+                    # воркер пометит failed сам после естественного финала разбора
+                    logger.warning("процесс разбора задачи %s не снят: %s", job_id, e)
+        job.error = "задача отменена владельцем"
+        if job.status == "queued":
+            # джоб ещё в очереди: статус ставит cancel, воркер его просто
+            # пропустит (проверка _cancel_requested на взятии из очереди)
+            job.status = "failed"
+            job.finished_at = _now_iso()
+        self._append_ledger(job)
+        return job.to_dict()
+
+    def retry(self, job_id: str) -> Job | None:
+        """Повторная постановка сохранённого L0-файла (админка v2): создаёт
+        НОВУЮ задачу с теми же user/filename/title/groups; старая запись
+        остаётся в журнале (история не переписывается). Неизвестная - None.
+
+        JobOperationRejected (409): L0 не сохранился - провал РАЗБОРА удаляет
+        файл (P2 ревью K4, файл не ест квоту), повторить можно только перегрузкой
+        документа; у прочих провалов (пайплайн недоступен, отмена) L0 остаётся.
+        Джобы чужого boot_id (фасад перезапущен) тоже ретраятся - их L0 жив."""
+        job = self._jobs.get(job_id)
+        if job is None:
+            record = self._ledger_last(job_id)
+            if record is None:
+                return None
+            job = Job.from_dict(record)
+        path = uploads_root() / user_dir(job.user_id) / job.filename
+        if not path.is_file():
+            raise JobOperationRejected(
+                409,
+                "L0-файл задачи не сохранился - повторите загрузку документа",
+            )
+        return self.submit(
+            user_id=job.user_id,
+            filename=job.filename,
+            title=job.title,
+            document_id=f"{user_dir(job.user_id)}/{job.filename}",
+            size_bytes=path.stat().st_size,
+            groups=list(job.groups),
+        )
+
+    def delete_job(self, job_id: str) -> dict | None:
+        """Убрать задачу из журнала (админка v2): завершённая удаляется из
+        памяти и из активного журнала (перезапись без её записей, под локом);
+        активная (queued/running текущего boot_id) - JobOperationRejected 409,
+        сначала отмените. Неизвестная - None. Записи ротации (.1) не читаются
+        list_jobs и не переписываются - они старше окна панели."""
+        job = self._jobs.get(job_id)
+        record = job.to_dict() if job is not None else self._ledger_last(job_id)
+        if record is None:
+            return None
+        if record.get("status") in ("queued", "running"):
+            if record.get("boot_id", self.boot_id) == self.boot_id:
+                raise JobOperationRejected(
+                    409, "задача ещё выполняется - сначала отмените её"
+                )
+            # чужой boot_id: фактически failed («сервис перезапущен») - удаляемо
+        self._jobs.pop(job_id, None)
+        with self._ledger_lock:
+            records = self._ledger_records()
+            kept = [r for r in records if r.get("job_id") != job_id]
+            if len(kept) != len(records):
+                path = self._ledger_path()
+                if path.exists():
+                    tmp = path.with_name(path.name + ".tmp")
+                    with tmp.open("w", encoding="utf-8") as f:
+                        for r in kept:
+                            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+                    tmp.replace(path)
+        return {"status": "deleted", "job_id": job_id}
 
     # ----------------------------------------------------------- чтение статуса
 
@@ -629,18 +753,30 @@ class IngestQueue:
                 job = self._q.get(timeout=2.0)
             except pyqueue.Empty:
                 continue
+            if job.job_id in self._cancel_requested:
+                # отменён в очереди: cancel уже пометил failed «отменена
+                # владельцем» и записал журнал - из работы не брать
+                self._q.task_done()
+                continue
             self._running_job = job.job_id
             try:
                 self._transition(job, "running")
-                self._process(job)
-                self._transition(job, "failed" if job.error else "done")
+                if job.job_id in self._cancel_requested:
+                    # отмена пришла между взятием из очереди и стартом -
+                    # в обработку не входить, ошибку уже поставил cancel
+                    self._transition(job, "failed")
+                else:
+                    self._process(job)
+                    self._transition(job, "failed" if job.error else "done")
                 self._audit(job)
             except Exception as e:  # noqa: BLE001 - джоб честно падает, воркер живёт
-                job.error = f"внутренняя ошибка очереди: {e}"[:500]
+                if job.job_id not in self._cancel_requested or not job.error:
+                    job.error = f"внутренняя ошибка очереди: {e}"[:500]
                 self._transition(job, "failed")
                 self._audit(job)
             finally:
                 self._running_job = None
+                self._cancel_requested.discard(job.job_id)
                 self._q.task_done()
 
     def _transition(self, job: Job, status: str) -> None:
@@ -657,16 +793,24 @@ class IngestQueue:
         Аудит 08.10: разбор выполняется в ОТДЕЛЬНОМ процессе с таймаутом
         (VELES_QUEUE_PARSE_TIMEOUT_S, 0 = без таймаута - прежнее поведение).
         Зависший парс (патологический PDF) раньше навсегда блокировал очередь -
-        теперь процесс снимается, джоб честно падает, воркер берёт следующий."""
+        теперь процесс снимается, джоб честно падает, воркер берёт следующий.
+        Админка v2: очередь запоминает дочерний процесс (cancel снимает его),
+        ссылка чистится при любом исходе разбора."""
         path = uploads_root() / user_dir(job.user_id) / job.filename
         timeout_s = parse_timeout_s()
         fn_args = (path, uploads_root(), path.suffix.lower())
-        if timeout_s <= 0:
-            return parse_document_file(*fn_args)
         try:
-            return _run_isolated(parse_document_file, fn_args, timeout_s)
-        except IsolatedTimeout as e:
-            raise TimeoutError(str(e)) from e
+            if timeout_s <= 0:
+                return parse_document_file(*fn_args)
+            try:
+                return _run_isolated(
+                    parse_document_file, fn_args, timeout_s,
+                    on_start=lambda proc: setattr(self, "_child_proc", proc),
+                )
+            except IsolatedTimeout as e:
+                raise TimeoutError(str(e)) from e
+        finally:
+            self._child_proc = None
 
     def _discard_l0(self, job: Job) -> None:
         """P2 ревью K4: упавший разбор не должен навсегда съедать квоту -
@@ -679,22 +823,34 @@ class IngestQueue:
                            path, job.job_id, e)
 
     def _process(self, job: Job) -> None:
-        """parse -> canonical (K3) -> апсерт живого индекса -> overlay -> аудит."""
+        """parse -> canonical (K3) -> апсерт живого индекса -> overlay -> аудит.
+
+        Админка v2: у отменённой задачи ошибка уже поставлена cancel - провалы
+        ниже её не затирают, а L0 не удаляется (перезапуск отменённой возможен,
+        если разбор не успел дописать канон)."""
         from .. import config
         from ..indexing.overlay import append_overlay
 
+        if job.job_id in self._cancel_requested:
+            return  # ошибка уже от cancel, воркер переведёт в failed
         try:
             pipeline = self._pipeline_fn()
         except Exception as e:  # noqa: BLE001 - нет индекса/модели: честный failed
-            job.error = f"индекс недоступен: {e}"[:500]
+            if job.job_id not in self._cancel_requested or not job.error:
+                job.error = f"индекс недоступен: {e}"[:500]
             return
         bundle, embedder = pipeline.bundle, pipeline.embedder
 
         try:
             doc = self._parse(job)
         except Exception as e:  # noqa: BLE001 - битый файл: человеческая причина
-            job.error = f"не удалось разобрать документ ({job.filename}): {e}"[:500]
-            self._discard_l0(job)  # битый файл не съедает квоту навсегда
+            if job.job_id not in self._cancel_requested or not job.error:
+                job.error = f"не удалось разобрать документ ({job.filename}): {e}"[:500]
+                self._discard_l0(job)  # битый файл не съедает квоту навсегда
+            return
+        if job.job_id in self._cancel_requested:
+            # процесс снят cancel'ом (или отмена пришла в конце разбора):
+            # разобранный текст в канон не пишем, L0 остаётся для перезапуска
             return
 
         job.sha256 = doc.sha256
@@ -709,7 +865,8 @@ class IngestQueue:
         try:
             outcome = ingest_document(doc, by=doc.ingested_by)
         except Exception as e:  # noqa: BLE001 - конфликт архивации и прочее
-            job.error = f"канон не принял документ: {e}"[:500]
+            if job.job_id not in self._cancel_requested or not job.error:
+                job.error = f"канон не принял документ: {e}"[:500]
             return
 
         job.action = outcome.action

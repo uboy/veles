@@ -41,3 +41,7 @@ p.row { display: flex; gap: 1rem; align-items: baseline; flex-wrap: wrap; }
 .answer { border: 1px solid #8884; padding: 0.5rem 0.8rem; margin: 0.5rem 0; }
 #jobdetail { margin-top: 0.8rem; }
 #apibanner { border: 1px solid #c62828; color: #c62828; padding: 0.3rem 0.7rem; }
+/* v2: массовая панель «Документов» и кнопки задач */
+#bulkpanel { margin-top: 0.5rem; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+#bulkpanel button:disabled, #bulkpanel select:disabled { opacity: 0.5; cursor: not-allowed; }
+button.jobact { padding: 0.15rem 0.5rem; font-size: 0.88em; }

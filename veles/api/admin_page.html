@@ -52,6 +52,14 @@
       <input type="search" id="docfilter" placeholder="поиск по названию">
       <button type="button" id="docsrefresh">Обновить</button>
     </p>
+    <div id="bulkpanel" class="plate" hidden>
+      <label>Сменить группу на
+        <select id="bulkgroup"><option value="">- выберите группу -</option></select>
+      </label>
+      <button type="button" id="bulkregroup" disabled>Применить</button>
+      <button type="button" id="bulkdelete" class="del" disabled>Удалить выбранные</button>
+      <span id="bulkprogress"></span>
+    </div>
     <p id="docmsg"></p>
     <div id="docsbox"><p><i>загрузка...</i></p></div>
   </section>

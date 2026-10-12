@@ -304,6 +304,81 @@ def delete_document(
     }
 
 
+def set_document_groups(
+    document_id: str,
+    groups: list[str],
+    root: Path | None = None,
+    by: str | None = None,
+) -> dict | None:
+    """Переписать access_groups документа в каноне (админка v2): манифест
+    текущей ревизии + access_group каждого узла nodes.jsonl. Архивные ревизии
+    (revision-r*/) не трогаются - их узлы в поиске не участвуют, при
+    восстановлении из trash группы текущей ревизии авторитетны.
+
+    Валидация групп и право смены (только админ, инвариант 5) - на вызывающем;
+    здесь только физика, как у delete_document. Все найденные каталоги
+    документа (включая легаси-близнецов, см. _find_doc_dirs) переписываются
+    одинаково - иначе пересборка вернула бы половину документа в старых
+    группах. Перезапись атомарна на каждый файл (tmp + replace); сбой между
+    файлами оставляет манифест и узлы в разных состояниях только при аварии
+    диска - чтение фасада берёт группы манифеста, узлов - мету узла.
+
+    Возвращает сведения о переписи или None, если документа нет. Живой индекс
+    патчит вызывающий (tombstone-паттерн: мета узлов + overlay, см.
+    veles/indexing/overlay.py)."""
+    from datetime import datetime, timezone
+
+    found = _find_doc_dirs(document_id, root)
+    if not found:
+        return None
+    new_groups = list(groups)
+    audit_dir = found[0][0].parent
+    total_nodes = 0
+    for d, manifest in found:
+        manifest["access_groups"] = new_groups
+        # сначала узлы (источник истины по числу), манифест последним - тот же
+        # порядок, что в save_document: убитый процесс не оставит «готовый»
+        # манифест над непереписанными узлами
+        nodes_path = d / "nodes.jsonl"
+        rewritten: list[str] = []
+        if nodes_path.exists():
+            for line in nodes_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                node = json.loads(line)
+                node["access_groups"] = new_groups
+                rewritten.append(json.dumps(node, ensure_ascii=False))
+            tmp = d / "nodes.jsonl.tmp"
+            tmp.write_text("\n".join(rewritten) + ("\n" if rewritten else ""),
+                           encoding="utf-8")
+            tmp.replace(nodes_path)
+        total_nodes += len(rewritten)
+        tmp = d / "manifest.json.tmp"
+        tmp.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        tmp.replace(d / "manifest.json")
+
+    event = {
+        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "event": "regroup",
+        "document_id": document_id,
+        "groups": new_groups,
+        "by": by or "unknown",
+        "nodes": total_nodes,
+    }
+    try:
+        with (audit_dir / "ingest-audit.jsonl").open("a", encoding="utf-8") as f:
+            f.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except OSError:  # noqa: BLE001 - журнал не ломает перепись групп
+        pass
+    return {
+        "document_id": document_id,
+        "groups": new_groups,
+        "nodes": total_nodes,
+    }
+
+
 def iter_documents(
     root: Path | None = None, include_revisions: bool = False
 ) -> Iterator[CanonicalDocument]:

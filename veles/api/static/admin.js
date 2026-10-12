@@ -1,4 +1,6 @@
-/* Админ-панель veles (/admin): обзор, документы (+удаление), задачи, группы,
+/* Админ-панель veles (/admin): обзор, документы (+удаление, v2: чекбоксы,
+ * массовая смена группы и массовое удаление), задачи (+v2: Отменить/
+ * Перезапустить/Удалить, бейджи «уже в базе» и «дубль задачи»), группы,
  * тестовый вопрос, загрузка. Токен админа (VELES_API_TOKEN) вводится на
  * странице и хранится в localStorage; каждый API-запрос несёт
  * Authorization: Bearer <токен>, в URL токен не используется. Вкладки -
@@ -163,16 +165,20 @@ function renderDocs() {
   const docs = (STATS.documents || []).filter(
     (d) => !q || String(d.title || "").toLowerCase().includes(q));
   const rows = docs.map((d) =>
-    "<tr><td>" + esc(dash(d.title)) + "</td><td>" + esc((d.groups || []).join(", ")) +
+    "<tr><td><input type=\"checkbox\" class=\"selrow\" data-doc=\"" + esc(d.document_id) +
+    "\" data-title=\"" + esc(dash(d.title)) + '"></td><td>' + esc(dash(d.title)) +
+    "</td><td>" + esc((d.groups || []).join(", ")) +
     "</td><td>" + d.nodes + "</td><td><code>" + esc(d.document_id) + "</code></td>" +
     '<td><button type="button" class="del" data-doc="' + esc(d.document_id) +
     '" data-title="' + esc(dash(d.title)) + '">Удалить</button></td></tr>').join("");
   box.innerHTML = rows
-    ? "<table><thead><tr><th>Название</th><th>Группы</th><th>Узлов</th><th>id</th><th></th></tr>" +
+    ? "<table><thead><tr><th><input type=\"checkbox\" id=\"selall\" title=\"выбрать все\"></th>" +
+      "<th>Название</th><th>Группы</th><th>Узлов</th><th>id</th><th></th></tr>" +
       "</thead><tbody>" + rows + "</tbody></table>"
     : "<p><i>документы не найдены</i></p>";
   $("docmsg").textContent = "Всего: " + STATS.totals.documents + " документов / " +
     STATS.totals.nodes + " узлов · загружено " + STATS_AT;
+  updateBulkPanel();
 }
 
 async function loadDocs() {
@@ -202,11 +208,102 @@ async function deleteDoc(docId, title) {
   }
 }
 
+// Массовые операции (v2): чекбоксы строк + панель «сменить группу / удалить».
+// Смена группы одиночного документа - той же панелью при одном выбранном.
+function selectedDocs() {
+  return Array.prototype.map.call(
+    document.querySelectorAll("#docsbox input.selrow:checked"),
+    (el) => ({ id: el.dataset.doc, title: el.dataset.title }));
+}
+
+function updateBulkPanel() {
+  const panel = $("bulkpanel");
+  if (!panel) return;
+  const anyRows = document.querySelector("#docsbox input.selrow") !== null;
+  const n = selectedDocs().length;
+  panel.hidden = !anyRows;
+  $("bulkprogress").textContent = "";
+  $("bulkgroup").disabled = !n;
+  $("bulkregroup").disabled = !n || !$("bulkgroup").value;
+  $("bulkdelete").disabled = !n;
+}
+
+async function runBulk(kind) {
+  const docs = selectedDocs();
+  if (!docs.length) return;
+  const msg = $("docmsg");
+  if (kind === "regroup") {
+    const opt = $("bulkgroup").selectedOptions[0];
+    if (!opt || !opt.value) { msg.textContent = "выберите группу"; return; }
+    if (!confirm("Сменить группу у " + docs.length + " документ(ов) на «" +
+        opt.textContent + "»? Права применятся сразу.")) return;
+  } else if (!confirm("Удалить " + docs.length + " документ(ов)? Узлы выйдут " +
+      "из поиска сразу, канон переедет в trash.")) {
+    return;
+  }
+  let ok = 0;
+  const failed = [];
+  for (let i = 0; i < docs.length; i++) {
+    $("bulkprogress").textContent = "обрабатываю " + (i + 1) + " из " + docs.length + "...";
+    try {
+      if (kind === "regroup") {
+        await api("/v1/documents/" + encodeURIComponent(docs[i].id) + "/groups", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ groups: [$("bulkgroup").value] }),
+        });
+      } else {
+        await api("/v1/documents/" + encodeURIComponent(docs[i].id), { method: "DELETE" });
+      }
+      ok += 1;
+    } catch (e) {
+      failed.push(docs[i].title + " - " + errText(e));
+      if (e instanceof ApiError && e.status === 401) {
+        $("bulkprogress").textContent = "";
+        msg.textContent = "Остановлено: " + errText(e);
+        return;
+      }
+    }
+  }
+  $("bulkprogress").textContent = "";
+  msg.textContent = kind === "regroup"
+    ? "Группы сменены: " + ok + " из " + docs.length +
+      (failed.length ? "; с ошибками: " + failed.join("; ") : "")
+    : "Удалено: " + ok + " из " + docs.length +
+      (failed.length ? "; с ошибками: " + failed.join("; ") : "");
+  await loadDocs();
+}
+
 // ---- Задачи ---------------------------------------------------------------
 
 function statusBadge(s) {
   const cls = { done: "ok", failed: "bad", running: "warn", queued: "dim" }[s] || "dim";
   return '<span class="' + cls + '">' + esc(dash(s)) + "</span>";
+}
+
+/* Бейджи v2: «уже в базе» (exists_in_base) и «дубль задачи №N» (duplicate_of). */
+function jobBadges(j) {
+  let out = "";
+  if (j.exists_in_base) {
+    out += ' <span class="ok" title="документ уже лежит в каноне">уже в базе</span>';
+  }
+  if (j.duplicate_of) {
+    out += ' <span class="warn" title="та же задача: ' + esc(j.duplicate_of) +
+      '">дубль задачи №' + esc(String(j.duplicate_of).slice(0, 8)) + "</span>";
+  }
+  return out;
+}
+
+/* Кнопки по статусу (v2): Отменить - queued/running, Перезапустить - failed,
+ * Удалить - завершённые (done/failed). */
+function jobButtons(j) {
+  const btn = (act, label, cls) =>
+    '<button type="button" class="jobact' + (cls ? " " + cls : "") +
+    '" data-act="' + act + '" data-job="' + esc(j.job_id) + '">' + label + "</button>";
+  if (j.status === "queued" || j.status === "running") return btn("cancel", "Отменить");
+  if (j.status === "failed") return btn("retry", "Перезапустить") + " " + btn("delete", "Удалить", "del");
+  if (j.status === "done") return btn("delete", "Удалить", "del");
+  return "";
 }
 
 function renderJobs(jobs) {
@@ -215,14 +312,40 @@ function renderJobs(jobs) {
   const rows = jobs.map((j) =>
     "<tr data-job=\"" + esc(j.job_id) + "\"><td>" +
     esc(String(dash(j.created_at)).replace("T", " ").slice(0, 19)) + "</td><td>" +
-    esc(j.title || j.filename || "-") + "</td><td>" + esc(j.user_id || "-") +
+    esc(j.title || j.filename || "-") + jobBadges(j) + "</td><td>" + esc(j.user_id || "-") +
     "</td><td>" + statusBadge(j.status) + "</td><td>" + esc(dash(j.action)) +
     "</td><td>" + esc(dash(j.revision_id)) + "</td><td>" + (j.nodes || 0) +
-    "</td><td>" + esc(String(j.error || "").slice(0, 120)) + "</td></tr>").join("");
+    "</td><td>" + esc(String(j.error || "").slice(0, 120)) + "</td><td>" +
+    jobButtons(j) + "</td></tr>").join("");
   box.innerHTML = "<table><thead><tr><th>Создана</th><th>Файл</th><th>Пользователь</th>" +
-    "<th>Статус</th><th>Действие</th><th>Ревизия</th><th>Узлов</th><th>Ошибка</th></tr>" +
+    "<th>Статус</th><th>Действие</th><th>Ревизия</th><th>Узлов</th><th>Ошибка</th>" +
+    "<th>Операции</th></tr>" +
     "</thead><tbody>" + rows + "</tbody></table>" +
-    "<p><small>клик по строке - детали задачи</small></p>";
+    "<p><small>клик по строке - детали задачи; бейдж «уже в базе» - документ уже в каноне, " +
+    "«дубль» - другая активная задача с тем же файлом</small></p>";
+}
+
+/* Действия над задачей (v2): cancel/retry - POST, delete - DELETE;
+ * автосписок обновляется после действия, не теряя состояние страницы. */
+async function jobAction(jobId, act) {
+  const note = $("jobsnote");
+  note.textContent = act === "cancel" ? "отменяю..." :
+    act === "retry" ? "перезапускаю..." : "удаляю...";
+  try {
+    if (act === "cancel") {
+      await api("/v1/documents/jobs/" + encodeURIComponent(jobId) + "/cancel", { method: "POST" });
+      note.textContent = "задача отменена";
+    } else if (act === "retry") {
+      const r = await api("/v1/documents/jobs/" + encodeURIComponent(jobId) + "/retry", { method: "POST" });
+      note.textContent = "задача перезапущена: " + r.job_id;
+    } else {
+      await api("/v1/documents/jobs/" + encodeURIComponent(jobId), { method: "DELETE" });
+      note.textContent = "задача удалена из журнала";
+    }
+    loadJobs();
+  } catch (e) {
+    note.textContent = "не удалось: " + errText(e);
+  }
 }
 
 let jobsTimer = null;
@@ -269,7 +392,7 @@ async function showJob(jobId) {
       ["завершена", j.finished_at], ["ошибка", j.error],
     ];
     box.innerHTML = "<h3>Задача <code>" + esc(j.job_id) + "</code></h3><table><tbody>" +
-      "<tr><th>статус</th><td>" + statusBadge(j.status) + "</td></tr>" +
+      "<tr><th>статус</th><td>" + statusBadge(j.status) + jobBadges(j) + "</td></tr>" +
       rows.map((kv) => "<tr><th>" + esc(kv[0]) + "</th><td>" + esc(dash(kv[1])) +
         "</td></tr>").join("") +
       "</tbody></table>";
@@ -311,6 +434,12 @@ async function loadGroups() {
   sel.innerHTML = '<option value="">личный документ</option>' + GROUPS.map(
     (g) => '<option value="' + esc(g.id) + '">' + esc(g.title + " (" + g.id + ")") +
       "</option>").join("");
+  // массовая панель «Документов» - тот же список групп, что у загрузки
+  const bulk = $("bulkgroup");
+  bulk.innerHTML = '<option value="">- выберите группу -</option>' + GROUPS.map(
+    (g) => '<option value="' + esc(g.id) + '">' + esc(g.title + " (" + g.id + ")") +
+      "</option>").join("");
+  updateBulkPanel();
 }
 
 // ---- Вопрос ---------------------------------------------------------------
@@ -476,11 +605,25 @@ window.addEventListener("DOMContentLoaded", () => {
   $("docfilter").addEventListener("input", renderDocs);
   $("docsrefresh").addEventListener("click", loadDocs);
   $("jobsrefresh").addEventListener("click", loadJobs);
+  // v2: выбор строк («выбрать все» - через шапку таблицы) и массовые операции
+  $("docsbox").addEventListener("change", (ev) => {
+    if (ev.target.id === "selall") {
+      document.querySelectorAll("#docsbox input.selrow").forEach(
+        (el) => { el.checked = ev.target.checked; });
+    }
+    updateBulkPanel();
+  });
+  $("bulkgroup").addEventListener("change", updateBulkPanel);
+  $("bulkregroup").addEventListener("click", () => runBulk("regroup"));
+  $("bulkdelete").addEventListener("click", () => runBulk("delete"));
   $("docsbox").addEventListener("click", (ev) => {
     const b = ev.target.closest("button.del");
     if (b) deleteDoc(b.dataset.doc, b.dataset.title);
   });
+  // v2: кнопки задач приоритетнее клика по строке (детали)
   $("jobsbox").addEventListener("click", (ev) => {
+    const b = ev.target.closest("button.jobact");
+    if (b) { jobAction(b.dataset.job, b.dataset.act); return; }
     const tr = ev.target.closest("tr[data-job]");
     if (tr) showJob(tr.dataset.job);
   });
