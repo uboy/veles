@@ -50,6 +50,20 @@ class NumpyFlatStore:
             json.dumps(self.ids, ensure_ascii=False), encoding="utf-8"
         )
 
+    def close(self) -> None:
+        """Закрыть mmap-карту матрицы (после close() хранилище нечитаемо).
+
+        Windows не даёт перезаписать файл, удерживаемый активной картой:
+        пересборка индекса в том же процессе, где load_index отдал mmap
+        (CLI-скрипты, тесты), обязана освободить карту до записи
+        numpy_matrix.npy. Фасаду не нужно: он матрицу не пишет, очередь
+        пишет только overlay (см. бриф 2026-10-14-index-binary-format)."""
+        m = getattr(self, "matrix", None)
+        if isinstance(m, np.memmap):
+            mmap_obj = getattr(m, "_mmap", None)
+            if mmap_obj is not None:
+                mmap_obj.close()
+
 
 class FaissFlatStore:
     """Порт донора: faiss IndexFlatIP по L2-нормализованным векторам."""

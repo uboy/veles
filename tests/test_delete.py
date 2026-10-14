@@ -346,6 +346,8 @@ def test_delete_removes_all_revisions(kb_env) -> None:
             fresh, qvec, DOC_QUERY, top_k=8, revision=rev)]
         assert not any(m in t for m in DOC_TEXTS for t in texts), rev
     # пересборка тоже не возвращает ни одну ревизию
+    # mmap-карту матрицы освобождаем: Windows не даёт np.save поверх живой карты
+    fresh.vector.close()
     bundle = build_index(HashingEmbedder(), NumpyFlatStore(dim=HASH_DIM))
     bundle.save(kb_env["index_dir"], embed_meta={"model": EMBED_MODEL, "backend": "numpy-flat"})
     rebuilt = load_index(kb_env["index_dir"])
@@ -368,6 +370,8 @@ def test_delete_seeded_canon_document(kb_env) -> None:
     fresh = load_index(kb_env["index_dir"])
     assert not any(SEED_MARK in t for t in search_bundle(fresh, SEED_QUERY))
 
+    # mmap-карту матрицы освобождаем: Windows не даёт np.save поверх живой карты
+    fresh.vector.close()
     bundle = build_index(HashingEmbedder(), NumpyFlatStore(dim=HASH_DIM))
     bundle.save(kb_env["index_dir"], embed_meta={"model": EMBED_MODEL, "backend": "numpy-flat"})
     assert not any(SEED_MARK in t for t in search_bundle(load_index(kb_env["index_dir"]), SEED_QUERY))

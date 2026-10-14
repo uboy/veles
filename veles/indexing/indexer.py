@@ -154,16 +154,16 @@ def load_index(dir_path: Path, store: VectorStore | None = None) -> "IndexBundle
             store = NumpyFlatStore()
         else:
             store = FaissFlatStore()
-    bm25_payload = json.loads((dir_path / "bm25.json").read_text(encoding="utf-8"))
-    bm25 = Bm25Index(k1=bm25_payload["k1"], b=bm25_payload["b"])
-    bm25.ids = bm25_payload["ids"]
-    bm25.doc_lens = bm25_payload["doc_lens"]
-    bm25.tfs = bm25_payload["tfs"]
-    bm25.df = bm25_payload["df"]
-    bm25.avgdl = bm25_payload["avgdl"]
+    # bm25: bm25.npz, если есть; старый bm25.json читается и конвертируется
+    # в CSR в памяти (стенды со старыми индексами работают без пересборки)
+    bm25 = Bm25Index.load(dir_path)
 
     if (dir_path / "numpy_matrix.npy").exists():
-        store.matrix = np.load(dir_path / "numpy_matrix.npy")
+        # mmap (Ф2): матрица не занимает резидентную память до обращения к
+        # страницам; первый апсерт материализует её через np.vstack - приемлемо.
+        # Матрицу только читают (search @) - перезаписи живого mmap нет: фасад
+        # матрицу не пишет, очередь пишет overlay
+        store.matrix = np.load(dir_path / "numpy_matrix.npy", mmap_mode="r")
         store.ids = json.loads((dir_path / "numpy_ids.json").read_text(encoding="utf-8"))
     else:
         import faiss
