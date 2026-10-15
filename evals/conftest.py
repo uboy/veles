@@ -6,7 +6,8 @@ pytest. Без хука «pytest evals/» собирал 0 тестов («no te
 имя файла не матчит дефолтный python_files. Хук добавляет к сборке ТОЛЬКО
 index-format-validate.py - у остальных eval-скриптов импорт имеет тяжёлые
 побочные эффекты (env-подстановка, поднятие uvicorn/LDAP), собирать их
-тестами нельзя.
+тестами нельзя. meta-compact-validate.py соблюдает ту же дисциплину (env только
+в main(), подпроцессы без побочных эффектов) - тоже собирается.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-_COLLECTABLE = {"index-format-validate.py"}
+_COLLECTABLE = {"index-format-validate.py", "meta-compact-validate.py"}
 
 
 def pytest_collect_file(file_path, parent):
