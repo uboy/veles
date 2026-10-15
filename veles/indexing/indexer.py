@@ -12,7 +12,6 @@ from pathlib import Path
 from ..canonical.store import iter_documents
 from .bm25 import Bm25Index
 from .embedder import EmbeddingProvider
-from .meta_compact import CompactNodeMeta
 from .vector_store import FaissFlatStore, NumpyFlatStore, VectorStore
 
 
@@ -48,10 +47,6 @@ INDEX_LOCK = threading.RLock()
 class IndexBundle:
     vector: VectorStore
     bm25: Bm25Index
-    # после load_index - CompactNodeMeta (компактная RAM-форма, тот же
-    # MutableMapping[str, dict]); при build_index и в очереди - обычный dict.
-    # Правки существующих узлов - только через patch_node_meta (правка
-    # присваиванием в полученный dict при компактной форме потерялась бы)
     node_meta: dict[str, dict] = field(default_factory=dict)
     identifiers: set[str] = field(default_factory=set)
 
@@ -59,17 +54,10 @@ class IndexBundle:
         dir_path.mkdir(parents=True, exist_ok=True)
         self.vector.save(dir_path)
         self.bm25.save(dir_path)
-        # компактная форма (load_index) разворачивается только на пути записи:
-        # to_plain_dict распаковывает все тексты; формат ДИСКА прежний
-        node_meta = (
-            self.node_meta.to_plain_dict()
-            if isinstance(self.node_meta, CompactNodeMeta)
-            else self.node_meta
-        )
         (dir_path / "meta.json").write_text(
             json.dumps(
                 {
-                    "node_meta": node_meta,
+                    "node_meta": self.node_meta,
                     "embed": embed_meta,
                     "identifiers": sorted(self.identifiers),
                 },
@@ -189,9 +177,7 @@ def load_index(dir_path: Path, store: VectorStore | None = None) -> "IndexBundle
     bundle = IndexBundle(
         vector=store,
         bm25=bm25,
-        # компактная RAM-форма меты (фаза 5): тексты - zlib-блоб, повторяющиеся
-        # строки - интернированы; dict-семантика для потребителей сохранена
-        node_meta=CompactNodeMeta.from_dict(meta["node_meta"]),
+        node_meta=meta["node_meta"],
         identifiers=set(meta["identifiers"]),
     )
     # K4: дельта инкрементальных загрузок поверх снапшота - документ, загруженный

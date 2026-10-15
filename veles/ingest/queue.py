@@ -133,7 +133,6 @@ def parse_document_file(path: Path, corpus_root: Path, ext: str) -> CanonicalDoc
 from ..canonical.store import ingest_document
 from ..config import DEFAULT_ACCESS_GROUPS
 from ..indexing.indexer import INDEX_LOCK, is_lost_force
-from ..indexing.meta_compact import iter_node_fields, patch_node_meta
 from ..policy.identifiers import extract_identifiers
 from .video import VIDEO_EXTENSIONS
 
@@ -424,19 +423,14 @@ def upsert_document(bundle, doc: CanonicalDocument, outcome, embedder) -> Upsert
     patches: dict = {}
     if outcome.previous_revision:
         # K21: только присваивания значений - размер node_meta не меняется,
-        # итерация безопасна для читателей и без лока. Компактная мета: скан
-        # трёх полей - items() материализовал бы все узлы с распаковкой текстов
-        for nid, meta in iter_node_fields(
-            bundle.node_meta, "document_id", "revision_id", "status"
-        ):
+        # итерация безопасна для читателей и без лока
+        for nid, meta in bundle.node_meta.items():
             if (
                 meta.get("document_id") == doc.document_id
                 and meta.get("revision_id", "r1") == outcome.previous_revision
                 and meta.get("status", "current") != "superseded"
             ):
-                # компактная мета: правка присваиванием в полученный dict
-                # потерялась бы (материализация каждый доступ заново)
-                patch_node_meta(bundle.node_meta, nid, {"status": "superseded"})
+                meta["status"] = "superseded"
                 patches[nid] = {"status": "superseded"}
 
     texts: list[str] = []
