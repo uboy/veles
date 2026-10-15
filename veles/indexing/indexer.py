@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import gc
 import json
 import re
 import sys
@@ -199,4 +201,14 @@ def load_index(dir_path: Path, store: VectorStore | None = None) -> "IndexBundle
     from .overlay import apply_overlay
 
     apply_overlay(bundle, dir_path)
+    # построение меты даёт пик аллокаций (json.loads всего meta.json + сборка
+    # компактной формы); освободившиеся страницы glibc после gc не отдаёт
+    # сам - trim возвращает их ОС (замер bm1 15.10: -254 МБ RSS); на других
+    # платформах - no-op
+    gc.collect()
+    if sys.platform == "linux":
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except OSError:
+            pass
     return bundle
