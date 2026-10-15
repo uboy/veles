@@ -22,6 +22,7 @@ from typing import Protocol, Sequence
 import numpy as np
 
 from ..config import IMAGE_DIM
+from .meta_compact import iter_node_fields
 
 
 class ImageEmbedder(Protocol):
@@ -121,10 +122,18 @@ def inventory_from_meta(
     records: list[ImageRecord] = []
     skipped: list[dict] = []
     per_doc: dict[str, int] = {}
-    for nid, meta in node_meta.items():
+    # фаза 1: дешёвый скан кандидатов (компактная мета: полный items()
+    # материализовал бы все узлы с распаковкой текстов; картинок - малая доля)
+    candidates: list[str] = []
+    for nid, meta in iter_node_fields(node_meta, "asset", "status", "document_id"):
         asset = meta.get("asset")
         if not asset or meta.get("status", "current") != "current":
             continue
+        candidates.append(nid)
+    # фаза 2: полные узлы только у кандидатов (подпись, таймкоды, группы)
+    for nid in candidates:
+        meta = node_meta[nid]
+        asset = meta.get("asset")
         doc_id = meta.get("document_id", "")
         if limit_per_doc and per_doc.get(doc_id, 0) >= limit_per_doc:
             continue

@@ -35,6 +35,7 @@ from veles.indexing.indexer import load_index
 from veles.indexing.meta_compact import (
     CompactNodeMeta,
     MetaCompactError,
+    iter_node_fields,
     patch_node_meta,
 )
 from veles.indexing.vector_store import NumpyFlatStore
@@ -442,3 +443,101 @@ def _raises_compact(meta: CompactNodeMeta, nid: str) -> bool:
     except MetaCompactError:
         return True
     return False
+
+
+# ------------------------------- O(N)-сканы полей (ревью раунд 1) -------------------------------
+
+
+def test_iter_fields_matches_full_access():
+    """Скан отдаёт те же значения, что полный доступ (в т.ч. патчи, added,
+    отсутствие поля, порядок __iter__) - смена значений сканов запрещена."""
+    plain = make_nodes(200)
+    compact = CompactNodeMeta.from_dict(plain)
+    # поля всех сканов-потребителей: /toc-/stats, _resolve_revision, doc_titles,
+    # regroup, DELETE, supersede/tombstone, инвентарь картинок
+    keys = ("status", "access_groups", "document_id", "title", "heading_path",
+            "revision_id", "asset", "provenance")
+    scanned = dict(compact.iter_fields(*keys))
+    assert list(scanned) == list(plain)  # порядок итерации сохранён
+    for nid, light in scanned.items():
+        want = {k: plain[nid][k] for k in keys if k in plain[nid]}
+        assert light == want, nid
+    # отсутствующее поле опускается (nv-000041 без access_groups)
+    assert "access_groups" not in scanned["nv-000041"]
+    # патчи видны скану
+    patch_node_meta(compact, "nv-000000", {"status": "superseded"})
+    patch_node_meta(compact, "nv-000001", {"access_groups": ["audit-2027"]})
+    assert dict(compact.iter_fields("status"))["nv-000000"] == {"status": "superseded"}
+    assert dict(compact.iter_fields("access_groups"))["nv-000001"] == {
+        "access_groups": ["audit-2027"]
+    }
+    # added-узлы (K4) в скане, затёртые setitem'ом без дублей
+    compact["nv-new"] = {"document_id": "doc-x", "text": "новый"}
+    compact["nv-000002"] = {"document_id": "doc-y", "text": "поверх"}
+    scanned2 = dict(compact.iter_fields("document_id"))
+    assert scanned2["nv-new"] == {"document_id": "doc-x"}
+    assert scanned2["nv-000002"] == {"document_id": "doc-y"}
+    assert len(scanned2) == len(plain) + 1
+    # явный запрос text распаковывается
+    assert dict(compact.iter_fields("text"))["nv-000003"] == {"text": plain["nv-000003"]["text"]}
+
+
+def test_iter_node_fields_plain_dict_yields_full_nodes():
+    """Обычный dict через диспетчер - прежнее поведение: полные узлы, ноль
+    копий (надмножество запрошенных полей)."""
+    plain = make_nodes(10)
+    pairs = list(iter_node_fields(plain, "document_id"))
+    assert pairs == [(nid, node) for nid, node in plain.items()]
+
+
+def test_scan_fields_does_not_decompress_text():
+    """Структурная регрессия находки ревью: скан без 'text' не трогает блоб -
+    на испорченном блобе проходит, полный доступ и скан с 'text' падают
+    MetaCompactError."""
+    plain = make_nodes(30)
+    broken = CompactNodeMeta.from_dict(plain)
+    broken._blob = broken._blob[:-3]
+    # O(N)-сканы потребителей (/toc, _resolve_revision, doc_titles, regroup,
+    # DELETE, supersede, tombstone) не читают text - работают на битом блобе
+    scanned = dict(broken.iter_fields("status", "document_id", "title"))
+    assert len(scanned) == len(plain)
+    assert scanned["nv-000000"] == {
+        "status": plain["nv-000000"]["status"],
+        "document_id": plain["nv-000000"]["document_id"],
+        "title": plain["nv-000000"]["title"],
+    }
+    # а чтение текста тем временем честно падает (подрезан последний чанк)
+    with pytest.raises(MetaCompactError):
+        broken[list(plain)[-1]]["text"]
+    with pytest.raises(MetaCompactError):
+        dict(broken.iter_fields("text"))
+
+
+def test_stats_and_revision_scan_on_compact_meta():
+    """Регрессия ревью на уровне API: /v1/knowledge/stats (O(N)-снапшот под
+    INDEX_LOCK) и _resolve_revision (каждый revision-запрос) работают на
+    компактной мете и дают тот же результат, что на dict-мете."""
+    from fastapi.testclient import TestClient
+
+    from tests.test_api import FakeEmbedder, make_bundle
+    from veles.api.app import VelesPipeline, create_app
+
+    def client_for(compact: bool):
+        bundle = make_bundle()
+        if compact:
+            bundle.node_meta = CompactNodeMeta.from_dict(bundle.node_meta)
+        return TestClient(create_app(pipeline=VelesPipeline(bundle, FakeEmbedder(), None)))
+
+    d_plain = client_for(False).get("/v1/knowledge/stats").json()
+    r = client_for(True).get("/v1/knowledge/stats")
+    assert r.status_code == 200
+    assert r.json() == d_plain
+    assert d_plain["totals"]["nodes"] == 2
+
+    c = client_for(True)
+    # известная ревизия (в мете нет revision_id -> дефолт "r1") проходит,
+    # неизвестная - 400: скан revision_id с компактной меты собрал набор
+    assert c.post("/v1/knowledge/query",
+                  json={"query": "какая норма управляемости", "revision": "r1"}).status_code == 200
+    assert c.post("/v1/knowledge/query",
+                  json={"query": "какая норма управляемости", "revision": "r99"}).status_code == 400

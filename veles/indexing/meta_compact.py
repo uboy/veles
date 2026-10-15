@@ -377,6 +377,112 @@ class CompactNodeMeta(MutableMapping):
                 out[k] = v
         return out
 
+    def iter_fields(self, *keys: str) -> Iterator[tuple[str, dict]]:
+        """O(N)-скан выбранных полей по всем узлам БЕЗ материализации и
+        распаковки текстов: values()/items() при компактной форме дают полный
+        узел на каждый nid (zlib-текст ~10 мкс/узел - секундный обход и
+        транзитный снапшот всех текстов на прода-корпусе), а сканам
+        /toc-/stats, _resolve_revision, doc_titles, regroup, DELETE,
+        supersede/tombstone и инвентарю картинок нужны 1-5 скаляров на узел.
+        Ленивый генератор (nid, {поле: значение}); отсутствующие поля
+        опускаются (потребительский .get с дефолтом работает как раньше);
+        запрошенный 'text' распаковывается - явный запрос. Значения те же,
+        что отдаёт __getitem__ (с учётом _added/_patches); порядок - как в
+        __iter__. Нестандартные значения-не-dict (см. from_dict) дают пустую
+        запись - прежний код на них падал бы на .get, скан молча пропускает.
+        Полные узлы - обычный доступ [nid]."""
+        added = self._added
+        patches = self._patches
+        cols = self._cols
+        tables = self._tables
+        # быстрый путь одиночного интернированного скаляра / групп (5 из 8
+        # сканов-потребителей): вся колонка разворачивается одним tolist(),
+        # без per-node словарных поисков cols/tables
+        if len(keys) == 1:
+            k = keys[0]
+            col = cols.get(k)
+            if col is not None:
+                values = tables[k].values
+                for nid, c in zip(self._order, col.tolist()):
+                    if nid in added:
+                        continue
+                    p = patches.get(nid)
+                    if p is not None and k in p:
+                        yield nid, {k: p[k]}
+                    elif c >= 0:
+                        yield nid, {k: values[c]}
+                    else:
+                        yield nid, {}
+                for nid, node in added.items():
+                    if k in node:
+                        yield nid, {k: node[k]}
+                    else:
+                        yield nid, {}
+                return
+            if k == "access_groups":
+                gvalues = self._groups_tbl.values
+                for nid, g in zip(self._order, self._groups_col.tolist()):
+                    if nid in added:
+                        continue
+                    p = patches.get(nid)
+                    if p is not None and k in p:
+                        yield nid, {k: p[k]}
+                    elif g >= 0:
+                        yield nid, {k: list(gvalues[g])}
+                    else:
+                        yield nid, {}
+                for nid, node in added.items():
+                    if k in node:
+                        yield nid, {k: node[k]}
+                    else:
+                        yield nid, {}
+                return
+        rest = self._rest
+        groups_col = self._groups_col
+        groups_tbl = self._groups_tbl
+        for i, nid in enumerate(self._order):
+            if nid in added:
+                continue  # затёрт setitem'ом - отдадется ниже из added
+            out: dict = {}
+            patch = patches.get(nid)
+            rec = rest[i]
+            rec_ok = type(rec) is dict
+            for k in keys:
+                if patch is not None and k in patch:
+                    out[k] = patch[k]
+                    continue
+                if not rec_ok:
+                    continue
+                col = cols.get(k)
+                if col is not None:  # интернированный скаляр
+                    c = col[i]
+                    if c >= 0:
+                        out[k] = tables[k].values[int(c)]
+                    continue
+                if k == "access_groups":
+                    g = groups_col[i]
+                    if g >= 0:
+                        out[k] = list(groups_tbl.values[int(g)])
+                    continue
+                v = rec.get(k, _MISSING)
+                if v is _MISSING:
+                    if k == "text":
+                        t = self._node_text(i)
+                        if t is not None:
+                            out[k] = t
+                    continue
+                if type(v) is _Mark:
+                    out[k] = self[nid][k]
+                elif k == "provenance" and (
+                    v.get("adapter") is _M_ADAPTER or v.get("source_id") is _M_SOURCE_ID
+                ):
+                    out[k] = self._rebuild_provenance(v, i)
+                else:
+                    out[k] = v
+            yield nid, out
+        for nid, node in added.items():
+            yield nid, {k: node[k] for k in keys if k in node}
+
     # --------------------------------------------------------------- выгрузка
 
     def to_plain_dict(self) -> dict[str, dict]:
@@ -427,3 +533,16 @@ def patch_node_meta(node_meta, nid: str, patch: Mapping) -> None:
         target = node_meta.get(nid)
         if target is not None:
             target.update(patch)
+
+
+def iter_node_fields(node_meta, *keys: str) -> Iterator[tuple[str, dict]]:
+    """O(N)-скан выбранных полей для потребителей-итераторов (тот же dispatch,
+    что get_fields в retriever): CompactNodeMeta - лёгкие записи только
+    запрошенных полей (без распаковки текстов, кроме явно запрошенного
+    'text'); обычный dict - полные узлы как есть, прежнее поведение без
+    лишней работы. Потребители, которым нужен text конкретного узла, берут
+    полный node_meta[nid] точечно."""
+    scan = getattr(node_meta, "iter_fields", None)
+    if scan is not None:
+        return scan(*keys)
+    return node_meta.items()
