@@ -315,6 +315,34 @@ def test_load_save_roundtrip_meta_bitwise(tmp_path):
 # ------------------------------------------------- потребители на компактной мете
 
 
+def test_get_fields_matches_getitem_without_materialization():
+    plain = make_nodes(60)
+    compact = CompactNodeMeta.from_dict(plain)
+    keys = ("status", "access_groups", "revision_id", "title", "document_id", "asset")
+    for nid, expected in plain.items():
+        want = {k: expected[k] for k in keys if k in expected}
+        assert compact.get_fields(nid, keys) == want, nid
+    # не-интернированные поля, text и provenance (с sentinel-интернированием)
+    nid = "nv-000001"
+    assert compact.get_fields(nid, ("logical_node_id",)) == {
+        "logical_node_id": plain[nid]["logical_node_id"]
+    }
+    assert compact.get_fields(nid, ("text",)) == {"text": plain[nid]["text"]}
+    assert compact.get_fields(nid, ("provenance",))["provenance"] == plain[nid]["provenance"]
+    # отсутствующий узел и отсутствующие поля
+    assert compact.get_fields("нет-такого", ("status",)) == {}
+    assert compact.get_fields(nid, ("нет-такого",)) == {}
+    # узел без запрошенного поля не ломается (nv-000041 без access_groups)
+    assert "access_groups" not in compact.get_fields("nv-000041", ("access_groups", "status"))
+    # патчи (K3/K10) и setitem (K4) учитываются
+    patch_node_meta(compact, "nv-000000", {"status": "superseded"})
+    assert compact.get_fields("nv-000000", ("status",)) == {"status": "superseded"}
+    compact["nv-new"] = {"title": "новый", "status": "current"}
+    assert compact.get_fields("nv-new", ("status", "title")) == {
+        "title": "новый", "status": "current"
+    }
+
+
 def test_retriever_junk_filter_on_compact_meta():
     plain = {
         "nv-junk": {

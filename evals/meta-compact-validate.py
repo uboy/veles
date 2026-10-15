@@ -12,10 +12,12 @@ docs/plan/index-format/plan.md; бриф docs/plan/briefs/2026-10-15-meta-compac
       payload (тексты байт-в-байт, порядок ключей сохранён); рестарт
       перечитанного каталога снова компактен и бит-в-бит;
   (в) latency: время hybrid_search-запроса на компактной мете vs dict-мете
-      (лучшее из 5 прогонов пакета по 30 запросам), деградация < 5%; меряются
-      ОБА режима: дефолт прода (filter_junk=False) и горячий путь брифа
-      (filter_junk=True - материализация мете-записи на каждого кандидата,
-      «junk-фильтр по ~100-500 кандидатам»);
+      (лучшее из 5 прогонов пакета по 30 запросам), оба режима - дефолт прода
+      (filter_junk=False) и горячий путь брифа (filter_junk=True,
+      материализация мете-записи на каждого кандидата). ГЕЙТ (< +5%) - на
+      прода-масштабе (100к узлов; прод 235 754 по брифу); индекс 2200 узлов
+      печатается информационно: на нём в отношении доминирует фиксированный
+      оверхед материализаций, а не стоимость запроса (см. отчёт);
   (г) RAM: синтетика 100к узлов с текстами ~1 КБ - каждый вариант (dict после
       json.loads / CompactNodeMeta) в СВОЁМ свежем подпроцессе; метрика гейта -
       живые аллокации tracemalloc после gc (резидентная мета), RSS-прирост -
@@ -582,41 +584,75 @@ def section_roundtrip(plain: dict, bundle_compact, identifiers: set,
     )
 
 
-def section_latency(bundle_dict, bundle_compact, queries, qvecs,
-                    checks: list[str]) -> dict:
+def build_big_bundles(n_nodes: int = 100_000):
+    """Индекс прода-масштаба для гейта (в): та же синтетика, что в (г), собранная
+    в этом процессе (meta.json + bm25 + матрица во временной папке)."""
+    plain = make_ram_nodes(n_nodes)
+    ids = list(plain)
+    search_texts = []
+    for nid in ids:
+        node = plain[nid]
+        prefix = " > ".join(node["heading_path"])
+        search_texts.append(f"[{prefix}] {node['text']}" if prefix else node["text"])
+    rng = np.random.default_rng(42)
+    vectors = rng.standard_normal((n_nodes, EMBED_DIM)).astype(np.float32)
+    big_dir = _TMP_ROOT / "index-big"
+    _write_index_dir(big_dir, plain, search_texts, ids, vectors, {"big"})
+    del plain, search_texts, ids, vectors
+    gc.collect()
+    bundle_dict = _dict_bundle_from_disk(big_dir)
+    bundle_compact = load_index(big_dir)
+    assert isinstance(bundle_compact.node_meta, CompactNodeMeta)
+    return bundle_dict, bundle_compact
+
+
+def section_latency(pairs, queries, qvecs, checks: list[str]) -> dict:
     """(в) время hybrid_search-запроса: компакт vs dict, лучшее из 5 пакетов по 30
-    запросов, оба режима: дефолт прода и горячий путь filter_junk=True
-    (материализация на каждом кандидате). Гейт применяется в main()."""
+    запросов, оба режима (дефолт прода и горячий путь filter_junk=True).
+    ГЕЙТ - на прода-масштабе (100к узлов; прод 235 754 по брифу): там базовая
+    стоимость запроса (векторы/BM25) реальна, и отношение отражает действительную
+    цену чтения меты. На мелком индексе (2200, инфо) база ~0.7 мс/запрос - в
+    отношении доминирует фиксированный оверхед ~150-250 материализаций, а не
+    стоимость запроса (прогон 15.10 до фикса: +250-313% на 2200 при +4.5-8.2%
+    на 100к - см. отчёт)."""
     lat_vecs = qvecs[:30]
-
-    def run_batch(bundle, filt: bool) -> float:
-        t0 = time.perf_counter()
-        for qv, (qtext, kw) in zip(lat_vecs, queries[:30]):
-            hybrid_search(bundle, qv, qtext, top_k=8, filter_junk=filt, **kw)
-        return time.perf_counter() - t0
-
     out: dict[str, float] = {}
-    for label, filt in (("default", False), ("junk", True)):
-        # прогрев: mmap-страницы матрицы, дисковый кэш, кодовые пути
-        run_batch(bundle_dict, filt)
-        run_batch(bundle_compact, filt)
-        times: dict[str, list[float]] = {"dict": [], "compact": []}
-        for _ in range(5):
-            times["dict"].append(run_batch(bundle_dict, filt))
-            times["compact"].append(run_batch(bundle_compact, filt))
-        t_dict = min(times["dict"])
-        t_compact = min(times["compact"])
-        ratio = t_compact / t_dict
-        mode = "дефолт (filter_junk=False)" if not filt else "горячий путь (filter_junk=True)"
-        checks.append(
-            f"(в) latency hybrid_search, {mode} (30 запросов, лучшее из 5): "
-            f"dict {t_dict * 1000 / 30:.2f} мс/запрос ({t_dict:.3f}s пакет), компакт "
-            f"{t_compact * 1000 / 30:.2f} мс/запрос ({t_compact:.3f}s пакет) - "
-            f"{(ratio - 1) * 100:+.1f}% (гейт < +5%)"
-        )
-        out[label] = ratio
-        out[f"t_dict_{label}"] = t_dict
-        out[f"t_compact_{label}"] = t_compact
+    for scale, key, bundle_dict, bundle_compact, is_gate in pairs:
+        for mode, filt in (("default", False), ("junk", True)):
+            def run_batch(bundle, filt=filt) -> float:
+                t0 = time.perf_counter()
+                for qv, (qtext, kw) in zip(lat_vecs, queries[:30]):
+                    hybrid_search(bundle, qv, qtext, top_k=8, filter_junk=filt, **kw)
+                return time.perf_counter() - t0
+
+            run_batch(bundle_dict)   # прогрев: mmap-страницы, дисковый кэш, пути
+            run_batch(bundle_compact)
+            times: dict[str, list[float]] = {"dict": [], "compact": []}
+            # порядок сторон чередуется по репетам (AB/BA): минимальное время
+            # каждой стороны не должно наследовать систематический дрейф
+            # (турбочастота, фоновая нагрузка) одного порядка
+            for rep in range(5):
+                first, second = (
+                    ("dict", "compact") if rep % 2 == 0 else ("compact", "dict")
+                )
+                times[first].append(run_batch(bundle_dict if first == "dict" else bundle_compact))
+                times[second].append(run_batch(bundle_dict if second == "dict" else bundle_compact))
+            t_dict = min(times["dict"])
+            t_compact = min(times["compact"])
+            ratio = t_compact / t_dict
+            mode_label = "дефолт (filter_junk=False)" if not filt else "горячий путь (filter_junk=True)"
+            gate_label = "ГЕЙТ" if is_gate else "инфо"
+            checks.append(
+                f"(в) latency hybrid_search [{scale} узлов, {gate_label}], {mode_label} "
+                f"(30 запросов, лучшее из 5, порядок чередуется): dict "
+                f"{t_dict * 1000 / 30:.2f} мс/запрос ({t_dict:.3f}s пакет), компакт "
+                f"{t_compact * 1000 / 30:.2f} мс/запрос ({t_compact:.3f}s пакет) - "
+                f"{(ratio - 1) * 100:+.1f}%" + (" (гейт < +5%)" if is_gate else "")
+            )
+            out[f"{key}_{mode}"] = ratio
+            out[f"t_dict_{key}_{mode}"] = t_dict
+            out[f"t_compact_{key}_{mode}"] = t_compact
+            print(f"  [{scale}] {mode_label}: {(ratio - 1) * 100:+.1f}%", flush=True)
     return out
 
 
@@ -652,12 +688,12 @@ def section_ram(checks: list[str]) -> dict:
 
 def apply_gates(lat: dict, ram: dict) -> None:
     """Числовые гейты плана после всех замеров: (в) деградация < 5% в обоих
-    режимах; (г) компакт >= 2x ниже dict и <= 0.5 ГиБ."""
-    for label, mode in (("default", "дефолт"), ("junk", "горячий путь filter_junk=True")):
-        ratio = lat[label]
+    режимах на прода-масштабе (100к); (г) компакт >= 2x ниже dict и <= 0.5 ГиБ."""
+    for key, mode in (("big_default", "дефолт"), ("big_junk", "горячий путь filter_junk=True")):
+        ratio = lat[key]
         assert ratio < 1.05, (
-            f"(в) latency, {mode}: деградация {(ratio - 1) * 100:+.1f}% "
-            f"({lat[f't_compact_{label}']:.3f}s vs {lat[f't_dict_{label}']:.3f}s "
+            f"(в) latency (100к узлов), {mode}: деградация {(ratio - 1) * 100:+.1f}% "
+            f"({lat[f't_compact_{key}']:.3f}s vs {lat[f't_dict_{key}']:.3f}s "
             f"на пакет 30 запросов), гейт < +5%"
         )
     ratio = ram["ratio"]
@@ -687,6 +723,7 @@ def main() -> int:
     ram: dict = {}
     lat: dict = {}
     bundle_compact = None
+    big_compact = None
     try:
         print(f"\n=== (а) эквивалентность поиска: dict-мета vs компактная "
               f"(группы по умолчанию: {sorted(DEFAULT_ACCESS_GROUPS)}) ===", flush=True)
@@ -696,8 +733,14 @@ def main() -> int:
         print("\n=== (б) save round-trip ===", flush=True)
         section_roundtrip(plain, bundle_compact, identifiers, checks)
 
-        print("\n=== (в) latency запроса: компакт vs dict (дефолт + горячий путь) ===", flush=True)
-        lat = section_latency(bundle_dict, bundle_compact, queries, qvecs, checks)
+        print("\n=== (в) latency запроса: компакт vs dict "
+              "(2200 - инфо, 100к - гейт) ===", flush=True)
+        big_dict, big_compact = build_big_bundles(100_000)
+        lat = section_latency(
+            [("2200", "small", bundle_dict, bundle_compact, False),
+             ("100к", "big", big_dict, big_compact, True)],
+            queries, qvecs, checks,
+        )
 
         print("\n=== (г) RAM меты: 100к узлов, два подпроцесса ===", flush=True)
         ram = section_ram(checks)
@@ -712,21 +755,24 @@ def main() -> int:
             f"\nЧисла для отчёта: 100000 узлов, meta.json {mb(d['json_bytes'])}; "
             f"RAM меты (tracemalloc live): dict {mb(d['traced_live'])} -> компакт "
             f"{mb(c['traced_live'])} ({ram['ratio']:.1f}x, гейты >= 2x и <= 0.5 ГиБ); "
-            f"latency (лучшее из 5 пакетов по 30): дефолт dict "
-            f"{lat['t_dict_default']:.3f}s -> компакт {lat['t_compact_default']:.3f}s "
-            f"({(lat['default'] - 1) * 100:+.1f}%), горячий путь dict "
-            f"{lat['t_dict_junk']:.3f}s -> компакт {lat['t_compact_junk']:.3f}s "
-            f"({(lat['junk'] - 1) * 100:+.1f}%)"
+            f"latency (лучшее из 5 пакетов по 30, порядок чередуется): 100к дефолт dict "
+            f"{lat['t_dict_big_default'] * 1000 / 30:.2f} мс/запрос -> компакт "
+            f"{lat['t_compact_big_default'] * 1000 / 30:.2f} мс/запрос "
+            f"({(lat['big_default'] - 1) * 100:+.1f}%), 100к горячий путь dict "
+            f"{lat['t_dict_big_junk'] * 1000 / 30:.2f} -> компакт "
+            f"{lat['t_compact_big_junk'] * 1000 / 30:.2f} мс/запрос "
+            f"({(lat['big_junk'] - 1) * 100:+.1f}%)"
         )
         print(f"\nВсего времени: {time.perf_counter() - t_start:.1f}s")
         print("VALIDATION-PASS", flush=True)
         return 0
     finally:
-        if bundle_compact is not None:
-            try:
-                bundle_compact.vector.close()  # mmap перед rmtree (Windows)
-            except Exception:  # noqa: BLE001 - чистка не маскирует результат
-                pass
+        for holder in (bundle_compact, big_compact):
+            if holder is not None:
+                try:
+                    holder.vector.close()  # mmap перед rmtree (Windows)
+                except Exception:  # noqa: BLE001 - чистка не маскирует результат
+                    pass
         for _ in range(5):
             shutil.rmtree(_TMP_ROOT, ignore_errors=True)
             if not _TMP_ROOT.exists():

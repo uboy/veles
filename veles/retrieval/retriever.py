@@ -207,10 +207,45 @@ def hybrid_search(
 
     groups = allowed_groups or DEFAULT_ACCESS_GROUPS
 
+    # Компактная мета (фаза 5): полный __getitem__ материализует узел с
+    # zlib-распаковкой текста (~10 мкс), а горячие циклы ниже читают 1-3
+    # скаляра на каждого кандидата (~150-250 чтений на запрос) - на каждом
+    # кандидате это давало +250-313% latency запроса (eval
+    # evals/results/2026-10-15-meta-compact.md). Скаляры - через get_fields
+    # без материализации; полный узел - один раз на запрос (memo: survivor-скан
+    # и evidence читают одни и те же nid). Для обычного dict-меты - обёртка с
+    # той же семантикой; значения и порядок проверок не меняются.
+    node_meta = bundle.node_meta
+    _fields_reader = getattr(node_meta, "get_fields", None)
+
+    if _fields_reader is not None:
+        def read_fields(nid: str, keys: tuple[str, ...]) -> dict:
+            return _fields_reader(nid, keys)
+    else:
+        def read_fields(nid: str, keys: tuple[str, ...]) -> dict:
+            # обычный dict и есть быстрый путь: отдаём узел ЦЕЛИКОМ (надмножество
+            # keys) - тот же объект и та же правдивость, что в исходном коде,
+            # без лишних аллокаций на каждого кандидата
+            return node_meta.get(nid)
+
+    _full_memo: dict[str, dict] = {}
+
+    def full_meta(nid: str):
+        m = _full_memo.get(nid)
+        if m is None:
+            m = node_meta.get(nid)
+            if m is not None:
+                _full_memo[nid] = m
+        return m
+
     def authorized(nid: str) -> bool:
-        meta = bundle.node_meta.get(nid)
+        meta = read_fields(nid, ("status", "access_groups", "revision_id"))
         if not meta:
-            return False
+            # исходная семантика - проверка правдивости ВСЕГО узла: у живого
+            # узла без этих полей scalar-набор пуст (редкий путь - полная
+            # материализация через memo)
+            if not full_meta(nid):
+                return False
         # K10: tombstone удаления - безусловный фильтр ДО групп и ревизий:
         # удалённый документ не ищется никому (в т.ч. админу с "*") и ни с каким
         # revision-параметром (all/r<n> включительно)
@@ -267,7 +302,7 @@ def hybrid_search(
                 bonus = legal_boost / (rrf_k + 1.0)
                 needles = [_LEGAL_CODES_MAP[r] for r in refs]
                 for nid in rrf:
-                    meta = bundle.node_meta.get(nid)
+                    meta = read_fields(nid, ("title",))
                     if not meta:
                         continue
                     title = " ".join(str(meta.get("title", "")).lower().replace("ё", "е").split())
@@ -289,7 +324,7 @@ def hybrid_search(
             }
             if len(q_words) >= 2:
                 for nid in rrf:
-                    meta = bundle.node_meta.get(nid)
+                    meta = read_fields(nid, ("title",))
                     if not meta:
                         continue
                     t_words = set(re.findall(
@@ -306,7 +341,7 @@ def hybrid_search(
             break
         survivors = 0
         for nid, _ in ordered:
-            meta = bundle.node_meta.get(nid)
+            meta = full_meta(nid)
             if not meta:
                 continue
             if filter_junk and is_junk_node(meta.get("text", "")):
@@ -323,7 +358,7 @@ def hybrid_search(
         # реранкер после пересортировки
         if len(evidence) >= pool_size:
             break
-        meta = bundle.node_meta.get(nid)
+        meta = full_meta(nid)
         if not meta:
             continue
         # K12: пустышки («Утратил силу.», телефоны) не занимают слоты выдачи

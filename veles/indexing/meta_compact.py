@@ -34,7 +34,7 @@ CompactNodeMeta - MutableMapping[str, dict] поверх:
 from __future__ import annotations
 
 import zlib
-from collections.abc import Iterator, Mapping, MutableMapping
+from collections.abc import Iterator, Mapping, MutableMapping, Sequence
 
 import numpy as np
 
@@ -78,6 +78,9 @@ _M_SOURCE_ID = _Mark("provenance.source_id")
 _SCALAR_FIELDS = ("document_id", "title", "revision_id", "status", "sha256_doc")
 # строки внутри provenance, интернируемые так же
 _PROV_FIELDS = ("adapter", "source_id")
+
+# маркер «поля нет» для rec.get в get_fields (значение поля может быть None)
+_MISSING = object()
 
 
 class _StringTable:
@@ -316,6 +319,63 @@ class CompactNodeMeta(MutableMapping):
             self._patches[nid] = dict(patch)
         else:
             cur.update(patch)
+
+    def get_fields(self, nid: str, keys: Sequence[str]) -> dict:
+        """Быстрое чтение нескольких полей узла БЕЗ материализации записи и
+        распаковки текста: интернированные скаляры - из таблиц по колонкам,
+        access_groups - из таблицы групп, «text» - распаковка своего чанка,
+        остальные - прямым чтением per-node записи. Горячие циклы hybrid_search
+        (authorized/бусты) читают 1-3 скаляра на каждого кандидата; полный
+        __getitem__ с zlib-текстом (~10 мкс) на каждом из ~150-250 чтений
+        запроса давал +250-313% latency (evals/results/2026-10-15-meta-compact.md).
+        Значения те же, что отдаёт __getitem__ (с учётом _added/_patches);
+        узла нет - пустой dict."""
+        added = self._added.get(nid)
+        if added is not None:
+            return {k: added[k] for k in keys if k in added}
+        i = self._pos.get(nid)
+        if i is None:
+            return {}
+        out: dict = {}
+        patch = self._patches.get(nid)
+        cols = self._cols
+        tables = self._tables
+        for k in keys:
+            if patch is not None and k in patch:
+                out[k] = patch[k]
+                continue
+            col = cols.get(k)
+            if col is not None:  # интернированный скаляр
+                c = col[i]
+                if c >= 0:
+                    out[k] = tables[k].values[int(c)]
+                continue
+            if k == "access_groups":
+                g = self._groups_col[i]
+                if g >= 0:
+                    out[k] = list(self._groups_tbl.values[int(g)])
+                continue
+            rec = self._rest[i]
+            if type(rec) is not dict:
+                continue
+            v = rec.get(k, _MISSING)
+            if v is _MISSING:
+                if k == "text":
+                    t = self._node_text(i)
+                    if t is not None:
+                        out[k] = t
+                continue
+            if type(v) is _Mark:
+                # ключ вне cols с sentinel-значением не встречается (sentinels
+                # стоят только у интернированных полей) - но не мусор:
+                out[k] = self[nid][k]
+            elif k == "provenance" and (
+                v.get("adapter") is _M_ADAPTER or v.get("source_id") is _M_SOURCE_ID
+            ):
+                out[k] = self._rebuild_provenance(v, i)
+            else:
+                out[k] = v
+        return out
 
     # --------------------------------------------------------------- выгрузка
 
