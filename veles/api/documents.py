@@ -72,6 +72,7 @@ from ..ingest.queue import (
     user_quota_lock,
 )
 from ..indexing.indexer import INDEX_LOCK
+from ..indexing.meta_compact import patch_node_meta
 from ..policy.groups import GROUP_ALL, defined_group_ids, group_exists
 from ..policy.identity import RequestIdentity, validated_user_id
 
@@ -645,7 +646,9 @@ def regroup_document(
     if pipeline is not None:
         for nid, meta in pipeline.bundle.node_meta.items():
             if meta.get("document_id") == canon_id:
-                meta["access_groups"] = parsed
+                # компактная мета: правка присваиванием в полученный dict
+                # потерялась бы (материализация каждый доступ заново)
+                patch_node_meta(pipeline.bundle.node_meta, nid, {"access_groups": parsed})
                 nids.append(nid)
     overlay_saved = True
     try:

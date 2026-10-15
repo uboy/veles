@@ -133,6 +133,7 @@ def parse_document_file(path: Path, corpus_root: Path, ext: str) -> CanonicalDoc
 from ..canonical.store import ingest_document
 from ..config import DEFAULT_ACCESS_GROUPS
 from ..indexing.indexer import INDEX_LOCK, is_lost_force
+from ..indexing.meta_compact import patch_node_meta
 from ..policy.identifiers import extract_identifiers
 from .video import VIDEO_EXTENSIONS
 
@@ -430,7 +431,9 @@ def upsert_document(bundle, doc: CanonicalDocument, outcome, embedder) -> Upsert
                 and meta.get("revision_id", "r1") == outcome.previous_revision
                 and meta.get("status", "current") != "superseded"
             ):
-                meta["status"] = "superseded"
+                # компактная мета: правка присваиванием в полученный dict
+                # потерялась бы (материализация каждый доступ заново)
+                patch_node_meta(bundle.node_meta, nid, {"status": "superseded"})
                 patches[nid] = {"status": "superseded"}
 
     texts: list[str] = []
