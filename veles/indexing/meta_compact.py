@@ -1,4 +1,4 @@
-"""Компактное RAM-представление меты узлов индекса (фаза 5 эпика index-format).
+"""Компактное RAM-представление меты узлов индекса (фазы 5 и 8 эпика index-format).
 
 Проблема: после json.loads(meta.json) node_meta держит полные тексты узлов
 в питоновских dict'ах - на прода-корпусе 235 754 узла это ~1.3 ГиБ RAM
@@ -6,18 +6,42 @@
 docs/plan/briefs/2026-10-15-meta-compact.md). Формат ДИСКА не меняется:
 IndexBundle.save разворачивает компактную форму обратно (to_plain_dict).
 
-CompactNodeMeta - MutableMapping[str, dict] поверх:
+Часть 2 (фаза 5) сжала тексты и повторяющиеся строки; замер на реальном
+корпусе (бриф docs/plan/briefs/2026-10-15-meta-tuple.md) показал, что после
+текстов главная масса - каркасы dict'ов rest-записей (~410 МБ), уникальные
+logical_node_id (62 МБ), provenance (61 МБ, внутри lines-списки) и
+heading_path (19 МБ). Фаза 8 дожимает их (CompactNodeMeta - MutableMapping):
+
 - тексты: ОДИН bytes-блоб из per-node zlib-чанков (сжатие каждого текста
   отдельно => ленивая распаковка O(текста) без прохода по всему блобу);
   границы чанков - _off (int64, длина N+1);
-- интернированные повторяющиеся строки: таблицы уникальных значений +
-  int32-колонка на узел (document_id, title, revision_id, status,
-  sha256_doc, provenance.adapter, provenance.source_id); access_groups -
-  таблица КОРТЕЖЕЙ групп (у большинства узлов группы совпадают);
-- прочие поля узла (asset, heading_path, logical_node_id, lost_force и любые
-  неожиданные) - в per-node записи как есть, без интернирования: их доля в
-  RAM на порядок меньше текстов. Interned-поля остаются в той же записи
-  sentinel-маркерами - исходный порядок ключей сохраняется;
+- logical_node_id: СВОЙ zlib-блоб с офсетами _ln_off (int64, N+1) - строки
+  уникальны, интернирование не жмёт; не-str значение (в т.ч. null) остаётся
+  обычным полем узла;
+- rest-записи узлов: СХЕМЫ-КОРТЕЖИ вместо dict. Схема - кортеж имён полей
+  узла (в исходном порядке; строковый text в схему не входит - его место
+  восстанавливается добавлением в конец, как в части 2). Таблица уникальных
+  схем (у узлов одного документа наборы полей совпадают - схем немного) +
+  int32-колонка _scol на узел; на узел - КОРТЕЖ ЗНАЧЕНИЙ в порядке схемы
+  (на месте полей, вынесенных в колонки/таблицы/блобы, - заглушка _SKIP).
+  Интернированные поля остаются в схеме именами - этим сохраняется исходный
+  порядок ключей при материализации (равенство dict от порядка не зависит,
+  но бит-в-бит доступ включает набор и значения всех полей);
+  интернированные скаляры (document_id, title, revision_id, status,
+  sha256_doc): таблицы уникальных значений + int32-колонки; access_groups и
+  heading_path - таблицы КОРТЕЖЕЙ (у большинства узлов совпадают) +
+  int32-колонки; неинтернируемые значения этих полей (null, не тот тип)
+  остаются в кортеже узла как есть;
+- provenance: строки adapter/source_id - в своих таблицах (_pcols);
+  lines - пара int32-колонок start/len + ПЛОСКИЙ int32-массив значений
+  (_pl_vals; len = -2 - явный null, -1 - поля нет); ОСТАЛЬНЫЕ поля
+  provenance (page, t_start, ...) - в схему кортежа узла под именами
+  «provenance.<поле>» (дети собираются обратно при материализации). Если
+  форма не раскладывается (lines - не список int, в узле есть своё поле
+  с именем «provenance.*», provenance - не dict) - provenance целиком
+  остаётся значением кортежа, строки внутри - sentinel-маркерами, как в
+  части 2. Порядок ключей материализованного provenance после разложения
+  не сохраняется (равенство dict и json round-trip от него не зависят);
 - новые узлы (очередь загрузок K4, __setitem__/update) - отдельный plain-dict
   поверх компактных структур, отдаётся приоритетно, живёт как обычный dict;
 - точечные правки существующих узлов (superseded K3, tombstone K10, смена
@@ -41,7 +65,8 @@ import numpy as np
 # zlib-уровень текстовых чанков: замер на синтетике 100к узлов
 # (scratch/rss-meta-100k.py, 20к текстов ~1.2 КБ): level 1 -> 9.5 МБ блоба,
 # level 2 -> 9.4 МБ (-1%), level 6 -> 9.1 МБ; скорость сжатия одинакова,
-# распаковка в hot-path важнее размера - фиксируем 1.
+# распаковка в hot-path важнее размера - фиксируем 1. Тот же уровень - для
+# чанков logical_node_id (те же короткие utf-8 строки).
 _ZLIB_LEVEL = 1
 
 
@@ -51,10 +76,10 @@ class MetaCompactError(Exception):
 
 
 class _Mark:
-    """Sentinel интернированного поля в per-node записи: материализатор
-    подменяет его значением из таблицы по int32-колонке. Сравнение по
-    identity (наследуемый __eq__/__hash__ object) - значение из json этими
-    объектами быть не может."""
+    """Sentinel интернированного поля ВЛОЖЕННОГО provenance (ветка, когда
+    разложение невозможно): материализатор подменяет его значением из
+    таблицы по int32-колонке. Сравнение по identity (наследуемый
+    __eq__/__hash__ object) - значение из json этими объектами быть не может."""
 
     __slots__ = ("name",)
 
@@ -65,12 +90,6 @@ class _Mark:
         return f"<intern:{self.name}>"
 
 
-_M_DOCUMENT_ID = _Mark("document_id")
-_M_TITLE = _Mark("title")
-_M_REVISION_ID = _Mark("revision_id")
-_M_STATUS = _Mark("status")
-_M_SHA256_DOC = _Mark("sha256_doc")
-_M_ACCESS_GROUPS = _Mark("access_groups")
 _M_ADAPTER = _Mark("provenance.adapter")
 _M_SOURCE_ID = _Mark("provenance.source_id")
 
@@ -79,8 +98,40 @@ _SCALAR_FIELDS = ("document_id", "title", "revision_id", "status", "sha256_doc")
 # строки внутри provenance, интернируемые так же
 _PROV_FIELDS = ("adapter", "source_id")
 
-# маркер «поля нет» для rec.get в get_fields (значение поля может быть None)
+# префикс имён полей provenance, разложенных в схему кортежа узла
+_PROV_PREFIX = "provenance."
+_PROV_PREFIX_LEN = len(_PROV_PREFIX)
+
+# маркер «поля нет» (значение поля может быть и None - различаем)
 _MISSING = object()
+
+# заглушка в кортеже значений узла: поле вынесено в колонку/таблицу/блоб и
+# восстанавливается по имени при материализации (identity-сравнение)
+_SKIP = object()
+
+# коды состояния provenance узла при сборке
+_PROV_ABSENT = 0       # поля provenance нет
+_PROV_DECOMPOSED = 1   # разложен: pcols + pl_* + дети в схеме
+_PROV_VALUE = 2        # значение кортежа: raw (не-dict) или nested-копия
+
+
+class _Schema:
+    """Схема узла: имена всех полей (кроме строкового text) в исходном
+    порядке + производные индексы. Объект один на уникальный набор полей;
+    создаются только в from_dict."""
+
+    __slots__ = ("names", "map", "prov_children")
+
+    def __init__(self, names: tuple[str, ...]) -> None:
+        self.names = names
+        # имя -> позиция в кортеже значений (быстрый lookup для get_fields)
+        self.map = {k: p for p, k in enumerate(names)}
+        # разложенные поля provenance: (имя без префикса, позиция)
+        self.prov_children = tuple(
+            (n[_PROV_PREFIX_LEN:], p)
+            for p, n in enumerate(names)
+            if n.startswith(_PROV_PREFIX)
+        )
 
 
 class _StringTable:
@@ -115,112 +166,217 @@ class CompactNodeMeta(MutableMapping):
         self._pos: dict[str, int] = {}       # nid -> номер строки
         self._blob: bytes = b""              # конкатенация zlib-чанков текстов
         self._off = np.zeros(1, dtype=np.int64)  # границы чанков, len = N+1
-        self._rest: list[dict] = []          # per-node записи без text
+        self._ln_blob: bytes = b""           # zlib-чанки logical_node_id
+        self._ln_off = np.zeros(1, dtype=np.int64)
+        self._schemas: list[_Schema] = []    # таблица уникальных схем
+        self._scol = np.zeros(0, dtype=np.int32)  # nid -> индекс схемы (-1: raw)
+        self._rows: list[tuple] = []         # кортеж значений на узел
         self._tables: dict[str, _StringTable] = {f: _StringTable() for f in _SCALAR_FIELDS}
         self._cols: dict[str, np.ndarray] = {}
         self._ptables: dict[str, _StringTable] = {f: _StringTable() for f in _PROV_FIELDS}
         self._pcols: dict[str, np.ndarray] = {}
         self._groups_tbl = _StringTable()    # кортежи групп
         self._groups_col = np.zeros(0, dtype=np.int32)
+        self._hpath_tbl = _StringTable()     # кортежи heading_path
+        self._hpath_col = np.zeros(0, dtype=np.int32)
+        # provenance.lines: плоский int32-массив + колонки start/len
+        # (len = -2: явный null; -1: поля нет)
+        self._pl_start = np.zeros(0, dtype=np.int32)
+        self._pl_len = np.full(0, -1, dtype=np.int32)
+        self._pl_vals = np.zeros(0, dtype=np.int32)
+        self._n_prov_decomposed = 0
+        self._n_prov_nested = 0
         # поверх компактной части (мутируемая, K4):
         self._added: dict[str, dict] = {}    # узлы setitem/update - как есть
         self._patches: dict[str, dict] = {}  # точечные правки compact-узлов
-        # sentinel -> (таблица, колонка): один lookup вместо цепочки if;
-        # заполняется в from_dict, когда колонки выделены
-        self._mark_sources: dict[_Mark, tuple] = {}
 
     # ------------------------------------------------------------ построение
 
     @classmethod
     def from_dict(cls, data: Mapping[str, dict], zlib_level: int = _ZLIB_LEVEL) -> "CompactNodeMeta":
         """Сжатие payload'а meta["node_meta"] (результат json.loads) - единственный
-        вход в компактную форму. Значения узлов не копируются, кроме shallow
-        copy provenance (уходят adapter/source_id в таблицы)."""
+        вход в компактную форму. Значения узлов не копируются, кроме вложенного
+        provenance в ветке без разложения (уходят adapter/source_id в таблицы)."""
         obj = cls()
         n = len(data)
         obj._order = list(data.keys())
         obj._pos = {nid: i for i, nid in enumerate(obj._order)}
         obj._off = np.zeros(n + 1, dtype=np.int64)
-        # -1 = поле у узла отсутствует (читается только при живом sentinel)
+        obj._ln_off = np.zeros(n + 1, dtype=np.int64)
+        obj._scol = np.full(n, -1, dtype=np.int32)
+        # -1 = поле у узла отсутствует (колонки читаются только при живой
+        # заглушке в кортеже - там гарантированно проинтернированное значение)
         obj._cols = {f: np.full(n, -1, dtype=np.int32) for f in _SCALAR_FIELDS}
         obj._pcols = {f: np.full(n, -1, dtype=np.int32) for f in _PROV_FIELDS}
         obj._groups_col = np.full(n, -1, dtype=np.int32)
+        obj._hpath_col = np.full(n, -1, dtype=np.int32)
+        obj._pl_start = np.zeros(n, dtype=np.int32)
+        obj._pl_len = np.full(n, -1, dtype=np.int32)
         tables, cols = obj._tables, obj._cols
         ptables, pcols = obj._ptables, obj._pcols
         groups_tbl, groups_col = obj._groups_tbl, obj._groups_col
+        hpath_tbl, hpath_col = obj._hpath_tbl, obj._hpath_col
+        schemas, schema_ids = obj._schemas, {}
+        pl_start_col, pl_len_col = obj._pl_start, obj._pl_len
 
         chunks: list[bytes] = []
-        rest: list[dict] = []
+        ln_chunks: list[bytes] = []
+        rows: list[tuple] = []
+        pl_vals: list[int] = []
+        n_decomposed = 0
+        n_nested = 0
         off = 0
+        ln_off = 0
         for i, (nid, node) in enumerate(data.items()):
             if not isinstance(node, dict):
                 # нестандартное значение узла (чужой/ручной meta.json): храним
-                # как есть, при доступе отдаём без материализации - как отдал бы
-                # прежний dict
+                # как есть (scol = -1), при доступе отдаём без материализации -
+                # как отдал бы прежний dict
                 chunks.append(b"")
+                ln_chunks.append(b"")
                 obj._off[i + 1] = off
-                rest.append(node)
+                obj._ln_off[i + 1] = ln_off
+                rows.append(node)
                 continue
-            # текст: не-str значение (в т.ч. null) остаётся в per-node записи
-            # как есть; пустая строка даёт валидный непустой чанк
+            # текст: не-str значение (в т.ч. null) остаётся обычным полем
+            # кортежа; пустая строка даёт валидный непустой чанк
             text = node.get("text")
             if isinstance(text, str):
                 raw = zlib.compress(text.encode("utf-8"), zlib_level)
-                rec = {k: v for k, v in node.items() if k != "text"}
+                text_in_row = False
             else:
                 raw = b""
-                rec = dict(node)
+                text_in_row = "text" in node
             chunks.append(raw)
             off += len(raw)
             obj._off[i + 1] = off
-            v = rec.get("document_id")
-            if type(v) is str:
-                cols["document_id"][i] = tables["document_id"].intern(v)
-                rec["document_id"] = _M_DOCUMENT_ID
-            v = rec.get("title")
-            if type(v) is str:
-                cols["title"][i] = tables["title"].intern(v)
-                rec["title"] = _M_TITLE
-            v = rec.get("revision_id")
-            if type(v) is str:
-                cols["revision_id"][i] = tables["revision_id"].intern(v)
-                rec["revision_id"] = _M_REVISION_ID
-            v = rec.get("status")
-            if type(v) is str:
-                cols["status"][i] = tables["status"].intern(v)
-                rec["status"] = _M_STATUS
-            v = rec.get("sha256_doc")
-            if type(v) is str:
-                cols["sha256_doc"][i] = tables["sha256_doc"].intern(v)
-                rec["sha256_doc"] = _M_SHA256_DOC
-            prov = rec.get("provenance")
-            if type(prov) is dict:
-                # shallow copy: таблицы держат строки, запись - свой словарь
-                prov2 = dict(prov)
-                v = prov2.get("adapter")
-                if type(v) is str:
-                    pcols["adapter"][i] = ptables["adapter"].intern(v)
-                    prov2["adapter"] = _M_ADAPTER
-                v = prov2.get("source_id")
-                if type(v) is str:
-                    pcols["source_id"][i] = ptables["source_id"].intern(v)
-                    prov2["source_id"] = _M_SOURCE_ID
-                rec["provenance"] = prov2
-            v = rec.get("access_groups")
-            if type(v) is list and all(type(g) is str for g in v):
-                groups_col[i] = groups_tbl.intern(tuple(v))
-                rec["access_groups"] = _M_ACCESS_GROUPS
-            rest.append(rec)
+            # logical_node_id: строка - в свой zlib-блоб (строки уникальны -
+            # интернирование не жмёт); не-str/отсутствие - обычное поле кортежа
+            lnid = node.get("logical_node_id")
+            if type(lnid) is str:
+                ln_raw = zlib.compress(lnid.encode("utf-8"), zlib_level)
+                lnid_in_row = False
+            else:
+                ln_raw = b""
+                lnid_in_row = "logical_node_id" in node
+            ln_chunks.append(ln_raw)
+            ln_off += len(ln_raw)
+            obj._ln_off[i + 1] = ln_off
+
+            # provenance: разложить на колонки/плоский массив, если форма
+            # позволяет; иначе - вложенное значение с sentinel-интернированием
+            prov = node.get("provenance", _MISSING)
+            prov_state = _PROV_ABSENT
+            prov_value = None
+            prov_children: dict[str, object] = {}
+            if prov is not _MISSING and type(prov) is dict and not any(
+                k != "provenance" and k.startswith(_PROV_PREFIX) for k in node
+            ):
+                lines = prov.get("lines", _MISSING)
+                lines_ok = lines is _MISSING or lines is None or (
+                    type(lines) is list
+                    and all(
+                        type(x) is int and -(1 << 31) <= x < (1 << 31) for x in lines
+                    )
+                )
+                if lines_ok:
+                    v = prov.get("adapter")
+                    if type(v) is str:
+                        pcols["adapter"][i] = ptables["adapter"].intern(v)
+                    v = prov.get("source_id")
+                    if type(v) is str:
+                        pcols["source_id"][i] = ptables["source_id"].intern(v)
+                    if lines is not _MISSING:
+                        if lines is None:
+                            pl_len_col[i] = -2
+                        else:
+                            pl_start_col[i] = len(pl_vals)
+                            pl_vals.extend(lines)
+                            pl_len_col[i] = len(lines)
+                    for ck, cv in prov.items():
+                        if ck == "lines":
+                            continue
+                        if (ck == "adapter" or ck == "source_id") and type(cv) is str:
+                            continue  # уже в таблице ptables
+                        prov_children[ck] = cv
+                    prov_state = _PROV_DECOMPOSED
+                    n_decomposed += 1
+            if prov_state == _PROV_ABSENT and prov is not _MISSING:
+                if type(prov) is dict:
+                    # разложение невозможно (lines не ints, коллизия имён):
+                    # shallow copy - таблицы держат строки, запись - свой словарь
+                    prov2 = dict(prov)
+                    v = prov2.get("adapter")
+                    if type(v) is str:
+                        pcols["adapter"][i] = ptables["adapter"].intern(v)
+                        prov2["adapter"] = _M_ADAPTER
+                    v = prov2.get("source_id")
+                    if type(v) is str:
+                        pcols["source_id"][i] = ptables["source_id"].intern(v)
+                        prov2["source_id"] = _M_SOURCE_ID
+                    prov_value = prov2
+                    n_nested += 1
+                else:
+                    prov_value = prov  # не-dict (в т.ч. null) - как есть
+                prov_state = _PROV_VALUE
+
+            # схема: имена полей узла в исходном порядке (строковый text -
+            # исключение: восстанавливается добавлением в конец) + разложенные
+            # поля provenance; сортировка детей - стабильность схем
+            names_list = [k for k in node if k != "text" or text_in_row]
+            if prov_state == _PROV_DECOMPOSED:
+                names_list.extend(
+                    sorted(_PROV_PREFIX + c for c in prov_children)
+                )
+            names = tuple(names_list)
+            si = schema_ids.get(names)
+            if si is None:
+                si = len(schemas)
+                schema_ids[names] = si
+                schemas.append(_Schema(names))
+            obj._scol[i] = si
+            # кортеж значений в порядке схемы; на месте вынесенных полей -
+            # заглушка _SKIP (восстанавливается по имени)
+            row: list = []
+            for k in names:
+                if k == "text":  # здесь только не-str text
+                    row.append(node["text"])
+                    continue
+                if k == "logical_node_id":
+                    row.append(_SKIP if type(node[k]) is str else node[k])
+                    continue
+                if k == "provenance":
+                    row.append(_SKIP if prov_state == _PROV_DECOMPOSED else prov_value)
+                    continue
+                if k.startswith(_PROV_PREFIX) and prov_state == _PROV_DECOMPOSED:
+                    # иначе это СВОЁ поле узла - обычное значение кортежа
+                    row.append(prov_children[k[_PROV_PREFIX_LEN:]])
+                    continue
+                v = node[k]
+                extracted = False
+                col = cols.get(k)
+                if col is not None and type(v) is str:
+                    col[i] = tables[k].intern(v)
+                    extracted = True
+                elif k == "access_groups" and type(v) is list and all(
+                    type(g) is str for g in v
+                ):
+                    groups_col[i] = groups_tbl.intern(tuple(v))
+                    extracted = True
+                elif k == "heading_path" and type(v) is list and all(
+                    type(g) is str for g in v
+                ):
+                    hpath_col[i] = hpath_tbl.intern(tuple(v))
+                    extracted = True
+                row.append(_SKIP if extracted else v)
+            rows.append(tuple(row))
 
         obj._blob = b"".join(chunks)
-        obj._rest = rest
-        obj._mark_sources = {
-            _M_DOCUMENT_ID: (tables["document_id"], cols["document_id"]),
-            _M_TITLE: (tables["title"], cols["title"]),
-            _M_REVISION_ID: (tables["revision_id"], cols["revision_id"]),
-            _M_STATUS: (tables["status"], cols["status"]),
-            _M_SHA256_DOC: (tables["sha256_doc"], cols["sha256_doc"]),
-        }
+        obj._ln_blob = b"".join(ln_chunks)
+        obj._rows = rows
+        obj._pl_vals = np.array(pl_vals, dtype=np.int32) if pl_vals else np.zeros(0, dtype=np.int32)
+        obj._n_prov_decomposed = n_decomposed
+        obj._n_prov_nested = n_nested
         return obj
 
     # --------------------------------------------------- MutableMapping API
@@ -232,28 +388,44 @@ class CompactNodeMeta(MutableMapping):
         i = self._pos.get(key)
         if i is None:
             raise KeyError(key)
-        node: dict = {}
-        rec = self._rest[i]
-        if type(rec) is not dict:
+        si = int(self._scol[i])
+        if si < 0:
             # нестандартное значение узла (см. from_dict) - без материализации
-            return rec
-        if rec:
-            mark_sources = self._mark_sources
-            for k, v in rec.items():
-                if type(v) is _Mark:
-                    # интернированное поле: значение из таблицы по колонке
-                    if v is _M_ACCESS_GROUPS:
-                        node[k] = list(self._groups_tbl.values[int(self._groups_col[i])])
-                    else:
-                        tbl, col = mark_sources[v]
-                        node[k] = tbl.values[int(col[i])]
-                    continue
+            return self._rows[i]
+        schema = self._schemas[si]
+        row = self._rows[i]
+        node: dict = {}
+        cols = self._cols
+        tables = self._tables
+        # разложён ли provenance у этого узла (дети в кортеже - его части,
+        # а не поля верхнего уровня; литеральные поля «provenance.*» узла
+        # материализуются как есть)
+        p_prov = schema.map.get("provenance", -1)
+        prov_decomposed = p_prov >= 0 and row[p_prov] is _SKIP
+        for p, k in enumerate(schema.names):
+            v = row[p]
+            if v is not _SKIP:
+                if prov_decomposed and k.startswith(_PROV_PREFIX):
+                    continue  # ребёнок provenance - уже внутри собираемого dict
                 if k == "provenance" and type(v) is dict and (
                     v.get("adapter") is _M_ADAPTER or v.get("source_id") is _M_SOURCE_ID
                 ):
                     # adapter/source_id - sentinel'ы, достраиваем из таблиц
                     v = self._rebuild_provenance(v, i)
                 node[k] = v
+                continue
+            # вынесенное поле: восстанавливаем по имени
+            col = cols.get(k)
+            if col is not None:  # интернированный скаляр
+                node[k] = tables[k].values[int(col[i])]
+            elif k == "access_groups":
+                node[k] = list(self._groups_tbl.values[int(self._groups_col[i])])
+            elif k == "heading_path":
+                node[k] = list(self._hpath_tbl.values[int(self._hpath_col[i])])
+            elif k == "logical_node_id":
+                node[k] = self._node_lnid(i)
+            else:  # provenance, разложенный по колонкам/плоскому массиву
+                node[k] = self._rebuild_prov_decomposed(i, schema, row)
         text = self._node_text(i)
         if text is not None:
             # text стоял в исходном порядке ключей не последним; порядок ключей
@@ -265,6 +437,7 @@ class CompactNodeMeta(MutableMapping):
         return node
 
     def _rebuild_provenance(self, prov: dict, i: int) -> dict:
+        """Ветка без разложения: вложенный dict с sentinel-адаптером/source_id."""
         out = dict(prov)
         a = out.get("adapter")
         if a is _M_ADAPTER:
@@ -273,6 +446,25 @@ class CompactNodeMeta(MutableMapping):
         if s is _M_SOURCE_ID:
             out["source_id"] = self._ptables["source_id"].values[int(self._pcols["source_id"][i])]
         return out
+
+    def _rebuild_prov_decomposed(self, i: int, schema: _Schema, row: tuple) -> dict:
+        """Сборка provenance из колонок/плоского массива/детей схемы."""
+        prov: dict = {}
+        a = self._pcols["adapter"][i]
+        if a >= 0:
+            prov["adapter"] = self._ptables["adapter"].values[int(a)]
+        s = self._pcols["source_id"][i]
+        if s >= 0:
+            prov["source_id"] = self._ptables["source_id"].values[int(s)]
+        for child, p in schema.prov_children:
+            prov[child] = row[p]
+        ln = int(self._pl_len[i])
+        if ln >= 0:
+            st = int(self._pl_start[i])
+            prov["lines"] = self._pl_vals[st:st + ln].tolist()
+        elif ln == -2:
+            prov["lines"] = None
+        return prov
 
     def __setitem__(self, key: str, value: dict) -> None:
         # K4: узлы очереди загрузок живут обычным dict поверх компактных
@@ -323,11 +515,12 @@ class CompactNodeMeta(MutableMapping):
     def get_fields(self, nid: str, keys: Sequence[str]) -> dict:
         """Быстрое чтение нескольких полей узла БЕЗ материализации записи и
         распаковки текста: интернированные скаляры - из таблиц по колонкам,
-        access_groups - из таблицы групп, «text» - распаковка своего чанка,
-        остальные - прямым чтением per-node записи. Горячие циклы hybrid_search
-        (authorized/бусты) читают 1-3 скаляра на каждого кандидата; полный
-        __getitem__ с zlib-текстом (~10 мкс) на каждом из ~150-250 чтений
-        запроса давал +250-313% latency (evals/results/2026-10-15-meta-compact.md).
+        access_groups/heading_path - из таблиц кортежей, logical_node_id - из
+        своего блоба, «text» - распаковка своего чанка, остальные - прямым
+        чтением кортежа узла. Горячие циклы hybrid_search (authorized/бусты)
+        читают 1-3 скаляра на каждого кандидата; полный __getitem__ с
+        zlib-текстом (~10 мкс) на каждом из ~150-250 чтений запроса давал
+        +250-313% latency (evals/results/2026-10-15-meta-compact.md).
         Значения те же, что отдаёт __getitem__ (с учётом _added/_patches);
         узла нет - пустой dict."""
         added = self._added.get(nid)
@@ -338,43 +531,56 @@ class CompactNodeMeta(MutableMapping):
             return {}
         out: dict = {}
         patch = self._patches.get(nid)
+        si = int(self._scol[i])
+        if si < 0:
+            # нестандартное значение-не-dict: полей нет (только патчи)
+            if patch is not None:
+                for k in keys:
+                    if k in patch:
+                        out[k] = patch[k]
+            return out
+        schema = self._schemas[si]
+        smap = schema.map
+        row = self._rows[i]
         cols = self._cols
         tables = self._tables
+        # разложён ли provenance (дети в кортеже - не поля верхнего уровня)
+        p_prov = smap.get("provenance", -1)
+        prov_decomposed = p_prov >= 0 and row[p_prov] is _SKIP
         for k in keys:
             if patch is not None and k in patch:
                 out[k] = patch[k]
                 continue
-            col = cols.get(k)
-            if col is not None:  # интернированный скаляр
-                c = col[i]
-                if c >= 0:
-                    out[k] = tables[k].values[int(c)]
-                continue
-            if k == "access_groups":
-                g = self._groups_col[i]
-                if g >= 0:
-                    out[k] = list(self._groups_tbl.values[int(g)])
-                continue
-            rec = self._rest[i]
-            if type(rec) is not dict:
-                continue
-            v = rec.get(k, _MISSING)
-            if v is _MISSING:
+            p = smap.get(k, -1)
+            if p < 0:
+                # в схеме узла поля нет; «text» при этом может лежать в блобе
                 if k == "text":
                     t = self._node_text(i)
                     if t is not None:
                         out[k] = t
                 continue
-            if type(v) is _Mark:
-                # ключ вне cols с sentinel-значением не встречается (sentinels
-                # стоят только у интернированных полей) - но не мусор:
-                out[k] = self[nid][k]
-            elif k == "provenance" and (
-                v.get("adapter") is _M_ADAPTER or v.get("source_id") is _M_SOURCE_ID
-            ):
-                out[k] = self._rebuild_provenance(v, i)
-            else:
-                out[k] = v
+            v = row[p]
+            if v is not _SKIP:
+                if prov_decomposed and k.startswith(_PROV_PREFIX):
+                    continue  # ребёнок provenance - не поле верхнего уровня
+                if k == "provenance" and type(v) is dict and (
+                    v.get("adapter") is _M_ADAPTER or v.get("source_id") is _M_SOURCE_ID
+                ):
+                    out[k] = self._rebuild_provenance(v, i)
+                else:
+                    out[k] = v
+                continue
+            col = cols.get(k)
+            if col is not None:  # интернированный скаляр
+                out[k] = tables[k].values[int(col[i])]
+            elif k == "access_groups":
+                out[k] = list(self._groups_tbl.values[int(self._groups_col[i])])
+            elif k == "heading_path":
+                out[k] = list(self._hpath_tbl.values[int(self._hpath_col[i])])
+            elif k == "logical_node_id":
+                out[k] = self._node_lnid(i)
+            else:  # provenance, разложенный по колонкам/плоскому массиву
+                out[k] = self._rebuild_prov_decomposed(i, schema, row)
         return out
 
     def iter_fields(self, *keys: str) -> Iterator[tuple[str, dict]]:
@@ -386,24 +592,28 @@ class CompactNodeMeta(MutableMapping):
         supersede/tombstone и инвентарю картинок нужны 1-5 скаляров на узел.
         Ленивый генератор (nid, {поле: значение}); отсутствующие поля
         опускаются (потребительский .get с дефолтом работает как раньше);
-        запрошенный 'text' распаковывается - явный запрос. Значения те же,
-        что отдаёт __getitem__ (с учётом _added/_patches); порядок - как в
-        __iter__. Нестандартные значения-не-dict (см. from_dict) дают пустую
-        запись - прежний код на них падал бы на .get, скан молча пропускает.
-        Полные узлы - обычный доступ [nid]."""
+        запрошенный 'text'/'logical_node_id' распаковывается - явный запрос.
+        Значения те же, что отдаёт __getitem__ (с учётом _added/_patches);
+        порядок - как в __iter__. Нестандартные значения-не-dict (см.
+        from_dict) дают пустую запись - прежний код на них падал бы на .get,
+        скан молча пропускает. Полные узлы - обычный доступ [nid]."""
         added = self._added
         patches = self._patches
         cols = self._cols
         tables = self._tables
-        # быстрый путь одиночного интернированного скаляра / групп (5 из 8
-        # сканов-потребителей): вся колонка разворачивается одним tolist(),
-        # без per-node словарных поисков cols/tables
+        rows = self._rows
+        schemas = self._schemas
+        scol = self._scol
+        # быстрый путь одиночного интернированного скаляра / групп (часть
+        # сканов-потребителей): колонка разворачивается одним tolist(), без
+        # per-node словарных поисков; узлы с неинтернируемым значением (null
+        # и т.п.) уходят в lookup по схеме
         if len(keys) == 1:
             k = keys[0]
             col = cols.get(k)
             if col is not None:
                 values = tables[k].values
-                for nid, c in zip(self._order, col.tolist()):
+                for i, (nid, c) in enumerate(zip(self._order, col.tolist())):
                     if nid in added:
                         continue
                     p = patches.get(nid)
@@ -412,7 +622,9 @@ class CompactNodeMeta(MutableMapping):
                     elif c >= 0:
                         yield nid, {k: values[c]}
                     else:
-                        yield nid, {}
+                        si = scol[i]
+                        pp = schemas[si].map.get(k, -1) if si >= 0 else -1
+                        yield nid, ({} if pp < 0 else {k: rows[i][pp]})
                 for nid, node in added.items():
                     if k in node:
                         yield nid, {k: node[k]}
@@ -421,7 +633,7 @@ class CompactNodeMeta(MutableMapping):
                 return
             if k == "access_groups":
                 gvalues = self._groups_tbl.values
-                for nid, g in zip(self._order, self._groups_col.tolist()):
+                for i, (nid, g) in enumerate(zip(self._order, self._groups_col.tolist())):
                     if nid in added:
                         continue
                     p = patches.get(nid)
@@ -430,55 +642,72 @@ class CompactNodeMeta(MutableMapping):
                     elif g >= 0:
                         yield nid, {k: list(gvalues[g])}
                     else:
-                        yield nid, {}
+                        si = scol[i]
+                        pp = schemas[si].map.get(k, -1) if si >= 0 else -1
+                        yield nid, ({} if pp < 0 else {k: rows[i][pp]})
                 for nid, node in added.items():
                     if k in node:
                         yield nid, {k: node[k]}
                     else:
                         yield nid, {}
                 return
-        rest = self._rest
         groups_col = self._groups_col
         groups_tbl = self._groups_tbl
+        hpath_col = self._hpath_col
+        hpath_tbl = self._hpath_tbl
         for i, nid in enumerate(self._order):
             if nid in added:
                 continue  # затёрт setitem'ом - отдадется ниже из added
             out: dict = {}
             patch = patches.get(nid)
-            rec = rest[i]
-            rec_ok = type(rec) is dict
+            si = scol[i]
+            if si < 0:
+                # нестандартное значение-не-dict: полей нет, патчи отдаются
+                if patch is not None:
+                    for k in keys:
+                        if k in patch:
+                            out[k] = patch[k]
+                yield nid, out
+                continue
+            schema = schemas[si]
+            smap = schema.map
+            row = rows[i]
+            # разложён ли provenance (дети в кортеже - не поля верхнего уровня)
+            p_prov = smap.get("provenance", -1)
+            prov_decomposed = p_prov >= 0 and row[p_prov] is _SKIP
             for k in keys:
                 if patch is not None and k in patch:
                     out[k] = patch[k]
                     continue
-                if not rec_ok:
-                    continue
-                col = cols.get(k)
-                if col is not None:  # интернированный скаляр
-                    c = col[i]
-                    if c >= 0:
-                        out[k] = tables[k].values[int(c)]
-                    continue
-                if k == "access_groups":
-                    g = groups_col[i]
-                    if g >= 0:
-                        out[k] = list(groups_tbl.values[int(g)])
-                    continue
-                v = rec.get(k, _MISSING)
-                if v is _MISSING:
+                p = smap.get(k, -1)
+                if p < 0:
                     if k == "text":
                         t = self._node_text(i)
                         if t is not None:
                             out[k] = t
                     continue
-                if type(v) is _Mark:
-                    out[k] = self[nid][k]
-                elif k == "provenance" and (
-                    v.get("adapter") is _M_ADAPTER or v.get("source_id") is _M_SOURCE_ID
-                ):
-                    out[k] = self._rebuild_provenance(v, i)
-                else:
-                    out[k] = v
+                v = row[p]
+                if v is not _SKIP:
+                    if prov_decomposed and k.startswith(_PROV_PREFIX):
+                        continue  # ребёнок provenance - не поле верхнего уровня
+                    if k == "provenance" and type(v) is dict and (
+                        v.get("adapter") is _M_ADAPTER or v.get("source_id") is _M_SOURCE_ID
+                    ):
+                        out[k] = self._rebuild_provenance(v, i)
+                    else:
+                        out[k] = v
+                    continue
+                col = cols.get(k)
+                if col is not None:  # интернированный скаляр
+                    out[k] = tables[k].values[int(col[i])]
+                elif k == "access_groups":
+                    out[k] = list(groups_tbl.values[int(groups_col[i])])
+                elif k == "heading_path":
+                    out[k] = list(hpath_tbl.values[int(hpath_col[i])])
+                elif k == "logical_node_id":
+                    out[k] = self._node_lnid(i)
+                else:  # provenance, разложенный по колонкам/плоскому массиву
+                    out[k] = self._rebuild_prov_decomposed(i, schema, row)
             yield nid, out
         for nid, node in added.items():
             yield nid, {k: node[k] for k in keys if k in node}
@@ -495,9 +724,15 @@ class CompactNodeMeta(MutableMapping):
         return {
             "nodes": len(self._pos),
             "blob_bytes": len(self._blob),
+            "lnid_blob_bytes": len(self._ln_blob),
             "unique_scalars": {name: len(t.values) for name, t in self._tables.items()},
             "unique_prov": {name: len(t.values) for name, t in self._ptables.items()},
             "unique_groups": len(self._groups_tbl.values),
+            "unique_heading_paths": len(self._hpath_tbl.values),
+            "schemas": len(self._schemas),
+            "lines_values": int(self._pl_vals.size),
+            "prov_decomposed": self._n_prov_decomposed,
+            "prov_nested": self._n_prov_nested,
             "added": len(self._added),
             "patched": len(self._patches),
         }
@@ -516,6 +751,26 @@ class CompactNodeMeta(MutableMapping):
             raise MetaCompactError(
                 f"компактная мета: не распакован текст узла {self._order[i]!r} "
                 f"(чанк байт [{start}:{end}] при блобе {len(self._blob)} байт): {e}"
+            ) from e
+
+    def _node_lnid(self, i: int) -> str:
+        """Ленивая распаковка logical_node_id узла i. Вызывается только когда
+        заглушка в кортеже гарантирует строку, поэтому пустой чанк - порча."""
+        start = int(self._ln_off[i])
+        end = int(self._ln_off[i + 1])
+        if end <= start:
+            raise MetaCompactError(
+                f"компактная мета: у узла {self._order[i]!r} ожидается "
+                f"logical_node_id, но чанк пуст (офсеты [{start}:{end}], "
+                f"блоб {len(self._ln_blob)} байт)"
+            )
+        try:
+            return zlib.decompress(self._ln_blob[start:end]).decode("utf-8")
+        except (zlib.error, UnicodeDecodeError) as e:
+            raise MetaCompactError(
+                f"компактная мета: не распакован logical_node_id узла "
+                f"{self._order[i]!r} (чанк байт [{start}:{end}] при блобе "
+                f"{len(self._ln_blob)} байт): {e}"
             ) from e
 
 

@@ -445,6 +445,250 @@ def _raises_compact(meta: CompactNodeMeta, nid: str) -> bool:
     return False
 
 
+# ------------- фаза 8: схемы-кортежи, блоб logical_node_id, lines в int32 -------------
+#
+# Профиль полей реального корпуса (бриф docs/plan/briefs/2026-10-15-meta-tuple.md):
+# у части узлов нет asset/heading_path/lines/logical_node_id; пустые списки,
+# явные null, неинтернируемые типы, коллизии имён - всё обязано материализоваться
+# бит-в-бит (набор полей, значения, отсутствие vs null).
+
+
+def make_profile_nodes(n: int = 600) -> dict[str, dict]:
+    """Синтетика реального профиля: индексы веток подобраны детерминированно
+    (np-<i>), тесты ссылаются на конкретные узлы - не менять раскладку."""
+    docs = [(f"doc-{d:03d}", f"Регламент №{d}", f"{d:064x}") for d in range(12)]
+    out: dict[str, dict] = {}
+    for i in range(n):
+        did, title, sha = docs[i % 12]
+        prov: dict = {
+            "source_id": f"src-{i % 3}",
+            "adapter": "md",
+            "lines": [i, i + 7],
+        }
+        node: dict = {
+            "document_id": did,
+            "title": title,
+            "sha256_doc": sha,
+            "revision_id": "r1",
+            "status": "current",
+            "text": f"Текст узла {i}: положение о порядке действий. Хвост {i}.",
+            "provenance": prov,
+            "access_groups": ["hr"],
+            "logical_node_id": f"ln-{i}",
+            "heading_path": [title, f"Раздел {i % 9}"],
+            "lost_force": False,
+        }
+        if i % 5:  # у части узлов asset нет
+            node["asset"] = f"pic-{i:03d}.png"
+        if i % 7 == 0:
+            del node["heading_path"]             # поля нет
+        elif i % 11 == 0:
+            node["heading_path"] = []            # пустой список
+        elif i % 13 == 0:
+            node["heading_path"] = None          # явный null (не интернируется)
+        if i % 4 == 0:
+            node["provenance"]["page"] = i % 300  # ребёнок provenance -> схема
+        if i % 9 == 0:
+            prov["lines"] = []                   # пустой список lines
+        elif i % 6 == 0:
+            prov["lines"] = None                 # явный null
+        elif i % 37 == 0:
+            del prov["lines"]                    # lines нет
+        if i % 41 == 0:
+            node["provenance"] = {"adapter": "md", "lines": ["5-9"]}  # не-int
+        if i % 43 == 0:
+            node["provenance"] = None            # provenance - null
+        if i % 47 == 0:
+            node["provenance.page"] = 7          # коллизия имён верхнего уровня
+        if i % 53 == 0:
+            del node["logical_node_id"]          # поля нет
+        elif i % 59 == 0:
+            node["logical_node_id"] = None       # явный null
+        if i % 61 == 0:
+            node["status"] = None                # неинтернируемый скаляр
+        if i % 67 == 0:
+            node["title"] = None
+        if i % 71 == 0:
+            node["access_groups"] = None
+        if i % 73 == 0:
+            node["text"] = None                  # text - null (в кортеж)
+        out[f"np-{i:06d}"] = node
+    return out
+
+
+def test_real_profile_bitwise_access_every_field():
+    plain = make_profile_nodes(600)
+    compact = CompactNodeMeta.from_dict(plain)
+    assert len(compact) == len(plain)
+    assert set(compact) == set(plain)
+    for nid, expected in plain.items():
+        _assert_nodes_equal(compact[nid], expected, nid)
+    # повторный доступ (материализация заново) - тот же результат
+    for nid in list(plain)[:80]:
+        _assert_nodes_equal(compact[nid], plain[nid], f"повтор {nid}")
+
+
+def test_real_profile_get_fields_and_scans_match_getitem():
+    plain = make_profile_nodes(600)
+    compact = CompactNodeMeta.from_dict(plain)
+    keys = ("status", "access_groups", "document_id", "title", "revision_id",
+            "heading_path", "provenance", "asset", "logical_node_id",
+            "provenance.page", "lost_force", "sha256_doc")
+    for nid, expected in plain.items():
+        want = {k: expected[k] for k in keys if k in expected}
+        assert compact.get_fields(nid, keys) == want, nid
+    # одиночные сканы (быстрый путь по колонке) - те же значения, включая
+    # null-значения и отсутствие поля
+    for k in keys:
+        scanned = dict(compact.iter_fields(k))
+        assert list(scanned) == list(plain), k
+        for nid, expected in plain.items():
+            want = {k: expected[k]} if k in expected else {}
+            assert scanned[nid] == want, f"{k}/{nid}"
+    # общий путь скана (несколько полей за проход)
+    scanned = dict(compact.iter_fields(*keys))
+    for nid, expected in plain.items():
+        want = {k: expected[k] for k in keys if k in expected}
+        assert scanned[nid] == want, nid
+    # скан text отдаёт и text=null из кортежа (не только блоб)
+    scanned_text = dict(compact.iter_fields("text"))
+    for nid, expected in plain.items():
+        assert scanned_text[nid] == {"text": expected["text"]}, nid
+
+
+def test_schema_tuples_dedup():
+    plain = make_profile_nodes(600)
+    compact = CompactNodeMeta.from_dict(plain)
+    stats = compact.compact_stats()
+    # каркасы dict заменены кортежами значений
+    assert all(type(r) is tuple for r in compact._rows)
+    # профиль разнообразный, но схем на порядок меньше, чем узлов
+    assert stats["schemas"] < len(plain) // 4, (
+        f"схем {stats['schemas']} на {len(plain)} узлов - дедупликация не работает"
+    )
+    # одинаковый набор полей всех узлов - ровно одна схема
+    uniform = {
+        f"u-{i:04d}": {
+            "document_id": "d1",
+            "title": "Т",
+            "text": f"текст {i}",
+            "provenance": {"source_id": "s", "adapter": "md", "lines": [i, i + 2]},
+            "access_groups": ["hr"],
+            "status": "current",
+        }
+        for i in range(100)
+    }
+    assert CompactNodeMeta.from_dict(uniform).compact_stats()["schemas"] == 1
+
+
+def test_logical_node_id_blob_and_negatives():
+    plain = make_profile_nodes(120)
+    compact = CompactNodeMeta.from_dict(plain)
+    stats = compact.compact_stats()
+    assert stats["lnid_blob_bytes"] > 0
+    # строковые id читаются из блоба бит-в-бит
+    assert compact["np-000001"]["logical_node_id"] == plain["np-000001"]["logical_node_id"]
+    # отсутствие и явный null различаются
+    assert "logical_node_id" not in compact["np-000000"]
+    assert compact["np-000059"]["logical_node_id"] is None
+    # подрезанный блоб логических id - внятная ошибка, в т.ч. в get_fields
+    broken = CompactNodeMeta.from_dict(plain)
+    broken._ln_blob = broken._ln_blob[:-2]  # хвост последнего чанка отрезан
+    with pytest.raises(MetaCompactError):
+        broken["np-000119"]["logical_node_id"]
+    with pytest.raises(MetaCompactError):
+        broken.get_fields("np-000119", ("logical_node_id",))
+    # сдвинутые офсеты - тоже порча
+    shifted = CompactNodeMeta.from_dict(plain)
+    shifted._ln_off[1] += 3
+    with pytest.raises(MetaCompactError):
+        shifted["np-000001"]["logical_node_id"]
+    # «пропавший» чанк при живой заглушке в кортеже - порча, не пустая строка
+    emptied = CompactNodeMeta.from_dict(plain)
+    emptied._ln_off[2] = emptied._ln_off[1]
+    with pytest.raises(MetaCompactError):
+        emptied["np-000001"]["logical_node_id"]
+
+
+def test_heading_path_table_of_tuples():
+    # дублирующиеся пути - таблица уникальных кортежей
+    shared = {
+        f"s-{i:03d}": {
+            "document_id": "d1",
+            "title": f"т-{i}",
+            "text": f"текст {i}",
+            "heading_path": ["Общий", f"Раздел {i % 4}"],
+            "status": "current",
+        }
+        for i in range(50)
+    }
+    compact = CompactNodeMeta.from_dict(shared)
+    assert compact.compact_stats()["unique_heading_paths"] == 4
+    for i in range(50):
+        nid = f"s-{i:03d}"
+        hp = compact[nid]["heading_path"]
+        assert hp == shared[nid]["heading_path"], nid
+        assert type(hp) is list
+    # правка пути только через patch - как regroup
+    patch_node_meta(compact, "s-000", {"heading_path": ["Новый", "Путь"]})
+    assert compact["s-000"]["heading_path"] == ["Новый", "Путь"]
+    # профиль реального корпуса: пустой список, null, отсутствие
+    prof = CompactNodeMeta.from_dict(make_profile_nodes(200))
+    assert prof["np-000011"]["heading_path"] == []      # 11 % 11 == 0
+    assert prof["np-000013"]["heading_path"] is None    # 13 % 13 == 0
+    assert "heading_path" not in prof["np-000007"]      # 7 % 7 == 0
+
+
+def test_provenance_lines_columns_and_fallbacks():
+    plain = make_profile_nodes(300)
+    compact = CompactNodeMeta.from_dict(plain)
+    stats = compact.compact_stats()
+    assert stats["lines_values"] > 0
+    assert stats["prov_decomposed"] > 0
+    assert stats["prov_nested"] > 0
+    # пустой список / явный null / отсутствие lines различаются бит-в-бит
+    assert compact["np-000009"]["provenance"]["lines"] == []      # 9 % 9 == 0
+    assert compact["np-000006"]["provenance"]["lines"] is None    # 6 % 6 == 0
+    assert "lines" not in compact["np-000037"]["provenance"]      # 37 % 37 == 0
+    # не-int lines: разложение невозможно, provenance вложенный - те же значения
+    assert compact["np-000041"]["provenance"] == {"adapter": "md", "lines": ["5-9"]}
+    # provenance = null
+    assert compact["np-000043"]["provenance"] is None
+    # коллизия: своё поле "provenance.page" и вложенный provenance соседствуют
+    n47 = compact["np-000047"]
+    assert n47["provenance.page"] == 7
+    assert n47["provenance"]["lines"] == [47, 54]
+    # ребёнок provenance (page) собирается из схемы кортежа
+    assert compact["np-000004"]["provenance"] == {
+        "source_id": "src-1",
+        "adapter": "md",
+        "page": 4,
+        "lines": [4, 11],
+    }
+    # get_fields и скан отдают собранный provenance
+    assert compact.get_fields("np-000004", ("provenance",)) == {
+        "provenance": compact["np-000004"]["provenance"]
+    }
+    scanned = dict(compact.iter_fields("provenance"))
+    for nid, expected in plain.items():
+        want = {"provenance": expected["provenance"]} if "provenance" in expected else {}
+        assert scanned[nid] == want, nid
+
+
+def test_profile_save_roundtrip_via_json():
+    plain = make_profile_nodes(200)
+    compact = CompactNodeMeta.from_dict(plain)
+    payload = json.loads(json.dumps(compact.to_plain_dict(), ensure_ascii=False))
+    # по-ключевое равенство (порядок ключей provenance после разложения
+    # может отличаться - равенство dict от него не зависит)
+    assert payload == plain
+    for nid, expected in plain.items():
+        _assert_nodes_equal(payload[nid], expected, nid)
+    # рестарт: перечитанный payload снова компактен и бит-в-бит
+    c2 = CompactNodeMeta.from_dict(payload)
+    assert c2.to_plain_dict() == plain
+
+
 # ------------------------------- O(N)-сканы полей (ревью раунд 1) -------------------------------
 
 
