@@ -32,6 +32,7 @@ from ..audit import actor_of, client_ip, get_audit  # журнал аудита 
 from ..config import INDEX_DIR, VELES_PUBLIC_URL, VELES_SOURCE_ROOTS
 from ..indexing.embedder import SentenceTransformersProvider
 from ..indexing.indexer import INDEX_LOCK, IndexBundle, load_index
+from ..indexing.meta_compact import iter_node_fields
 from ..policy.answer import decide
 from ..policy.groups import GROUP_ALL, membership_of
 from ..policy.identifiers import extract_legal_refs, extract_identifiers
@@ -162,7 +163,12 @@ def _resolve_revision(bundle: IndexBundle, revision: Optional[str]) -> Optional[
         )
     # K21: снапшот под INDEX_LOCK - воркер очереди расширяет node_meta
     with INDEX_LOCK:
-        known = {m.get("revision_id", "r1") for m in bundle.node_meta.values()}
+        # компактная мета: скан только revision_id - полный values() на каждый
+        # revision-запрос материализовал бы все узлы с распаковкой текстов
+        known = {
+            m.get("revision_id", "r1")
+            for _, m in iter_node_fields(bundle.node_meta, "revision_id")
+        }
     if revision not in known:
         raise HTTPException(status_code=400, detail=f"неизвестная ревизия: {revision}")
     return revision
@@ -175,8 +181,12 @@ class VelesPipeline:
         self.bundle = bundle
         self.embedder = embedder
         self.llm = llm
+        # компактная мета: скан одного поля - полный values() материализовал бы
+        # все узлы с распаковкой текстов на старте фасада
         self.doc_titles = {
-            m.get("title", "") for m in bundle.node_meta.values() if m.get("title")
+            m.get("title", "")
+            for _, m in iter_node_fields(bundle.node_meta, "title")
+            if m.get("title")
         }
 
     def answer(
@@ -914,9 +924,20 @@ def create_app(
         docs: dict[str, dict] = {}
         superseded_nodes = 0
         visible_nodes = 0
-        # K21: снапшот под INDEX_LOCK - воркер очереди расширяет node_meta
+        # K21: снапшот под INDEX_LOCK - воркер очереди расширяет node_meta.
+        # Компактная мета: ровно те поля, что читает цикл ниже (status,
+        # access_groups через _visible_by_groups, document_id, title,
+        # heading_path) - полный values() материализовал бы все узлы с
+        # распаковкой текстов: секунды под локом и транзитный снапшот всех
+        # текстов (~1 ГиБ на прода-корпусе)
         with INDEX_LOCK:
-            meta_snapshot = list(p.bundle.node_meta.values())
+            meta_snapshot = [
+                m
+                for _, m in iter_node_fields(
+                    p.bundle.node_meta,
+                    "status", "access_groups", "document_id", "title", "heading_path",
+                )
+            ]
         for m in meta_snapshot:
             status = m.get("status", "current")
             # K10: удалённые (tombstone) узлы не видны никому, в т.ч. админу,

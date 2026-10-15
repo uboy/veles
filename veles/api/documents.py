@@ -72,6 +72,7 @@ from ..ingest.queue import (
     user_quota_lock,
 )
 from ..indexing.indexer import INDEX_LOCK
+from ..indexing.meta_compact import iter_node_fields, patch_node_meta
 from ..policy.groups import GROUP_ALL, defined_group_ids, group_exists
 from ..policy.identity import RequestIdentity, validated_user_id
 
@@ -643,9 +644,13 @@ def regroup_document(
     except Exception:  # noqa: BLE001 - нет индекса: канон переписан, патч уйдёт
         pass            # следующей пересборкой
     if pipeline is not None:
-        for nid, meta in pipeline.bundle.node_meta.items():
+        # компактная мета: скан document_id - items() материализовал бы все
+        # узлы с распаковкой текстов
+        for nid, meta in iter_node_fields(pipeline.bundle.node_meta, "document_id"):
             if meta.get("document_id") == canon_id:
-                meta["access_groups"] = parsed
+                # правка присваиванием в полученный dict потерялась бы
+                # (материализация каждый доступ заново)
+                patch_node_meta(pipeline.bundle.node_meta, nid, {"access_groups": parsed})
                 nids.append(nid)
     overlay_saved = True
     try:
@@ -737,8 +742,12 @@ def delete_document(
         # не несёт ни один живой узел. K21: снапшот под INDEX_LOCK - воркер
         # очереди расширяет node_meta, итерация по живому dict небезопасна
         title = (info.get("title") or "").strip()
+        # компактная мета: скан title/status - полный values() материализовал
+        # бы все узлы с распаковкой текстов
         with INDEX_LOCK:
-            metas = list(pipeline.bundle.node_meta.values())
+            metas = [
+                m for _, m in iter_node_fields(pipeline.bundle.node_meta, "title", "status")
+            ]
         if title and not any(
             m.get("title") == title and m.get("status") != "deleted"
             for m in metas

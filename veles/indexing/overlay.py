@@ -37,6 +37,7 @@ from pathlib import Path
 import numpy as np
 
 from ..config import EMBED_MODEL
+from .meta_compact import iter_node_fields, patch_node_meta
 
 # ревью K10 P1: писателей оверлея больше одного - воркер очереди (дельта
 # загрузки) и DELETE в тредпуле фасада (tombstone). Без лока параллельный
@@ -115,7 +116,9 @@ def _apply_checked(bundle, data: dict) -> None:
     bundle.node_meta.update(meta.get("nodes") or {})
     for nid, patch in (meta.get("patches") or {}).items():
         if nid in bundle.node_meta:
-            bundle.node_meta[nid].update(patch)
+            # компактная мета: правка присваиванием в полученный dict
+            # потерялась бы (материализация каждый доступ заново)
+            patch_node_meta(bundle.node_meta, nid, patch)
     if not ids:
         # патч-only оверлей (K10 tombstone удаления, дельта документа без
         # индексируемых узлов): мета и патчи применены выше, векторов нет
@@ -265,12 +268,16 @@ def tombstone_document(index_dir: Path, document_id: str, bundle=None) -> int:
     основному индексу. bundle=None (CLI) - узлы собираются с диска
     (_index_node_ids). Индекса нет - вернёт 0 (удалять нечего)."""
     if bundle is not None:
+        # компактная мета: скан document_id - items() материализовал бы все
+        # узлы с распаковкой текстов
         nids = [
-            nid for nid, m in bundle.node_meta.items()
+            nid
+            for nid, m in iter_node_fields(bundle.node_meta, "document_id")
             if m.get("document_id") == document_id
         ]
         for nid in nids:
-            bundle.node_meta[nid]["status"] = "deleted"
+            # компактная мета: правка только через patch (см. patch_node_meta)
+            patch_node_meta(bundle.node_meta, nid, {"status": "deleted"})
     else:
         nids = _index_node_ids(index_dir, document_id)
     if not nids:
